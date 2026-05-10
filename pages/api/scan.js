@@ -1,5 +1,7 @@
 // pages/api/scan.js — v4.0 — based on official Sahmk API docs
 
+export const config = { maxDuration: 300 }; // Vercel Pro max 300s
+
 const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
@@ -37,34 +39,53 @@ export default async function handler(req, res) {
       const symbol = stock.symbol;
       try {
         const stochResults = {}, dmaResults = {};
+        // cache البيانات — نجلب كل فاصل مرة واحدة فقط
+        const ohlcCache = {};
 
+        const getOHLC = async (interval) => {
+          if (!ohlcCache[interval]) {
+            ohlcCache[interval] = await fetchOHLC(sahmkKey, symbol, interval);
+          }
+          return ohlcCache[interval];
+        };
+
+        // تحديد الفواصل المطلوبة
+        const neededIntervals = new Set();
+        if (cfg.stochDaily   || cfg.dmaDaily)   neededIntervals.add("1d");
+        if (cfg.stochWeekly  || cfg.dmaWeekly)  neededIntervals.add("1w");
+        if (cfg.stochMonthly || cfg.dmaMonthly) neededIntervals.add("1m");
+        // SMA50 تحتاج يومي دائماً
+        if ([cfg.stochDailySMA50,cfg.stochWeeklySMA50,cfg.stochMonthlySMA50,
+             cfg.dmaDailySMA50,cfg.dmaWeeklySMA50,cfg.dmaMonthlySMA50].some(Boolean))
+          neededIntervals.add("1d");
+
+        // جلب الفواصل بشكل متسلسل لتجنب الـ timeout
+        for (const iv of neededIntervals) await getOHLC(iv);
+
+        // حساب Stoch
         for (const [key, cfgKey, interval] of [
           ["daily",   "stochDaily",   "1d"],
           ["weekly",  "stochWeekly",  "1w"],
           ["monthly", "stochMonthly", "1m"],
         ]) {
           if (!cfg[cfgKey]) continue;
-          const data = await fetchOHLC(sahmkKey, symbol, interval);
+          const data = ohlcCache[interval];
           if (data) stochResults[key] = calcStoch(data.closes, data.highs, data.lows, 5, 3, 3);
         }
 
+        // حساب DMA (من نفس الـ cache)
         for (const [key, cfgKey, interval] of [
           ["daily",   "dmaDaily",   "1d"],
           ["weekly",  "dmaWeekly",  "1w"],
           ["monthly", "dmaMonthly", "1m"],
         ]) {
           if (!cfg[cfgKey]) continue;
-          const data = await fetchOHLC(sahmkKey, symbol, interval);
+          const data = ohlcCache[interval];
           if (data) dmaResults[key] = calcDMA(data.closes, 10, 50, 10);
         }
 
-        // جلب closes اليومية للـ SMA50 إذا احتجنا
-        let dailyCloses = null;
-        if ([cfg.stochDailySMA50,cfg.stochWeeklySMA50,cfg.stochMonthlySMA50,
-             cfg.dmaDailySMA50,cfg.dmaWeeklySMA50,cfg.dmaMonthlySMA50].some(Boolean)) {
-          const dData = await fetchOHLC(sahmkKey, symbol, "1d");
-          if (dData) dailyCloses = dData.closes;
-        }
+        // SMA50 من الـ cache
+        const dailyCloses = ohlcCache["1d"]?.closes || null;
         const evaluation = evalSignal(stochResults, dmaResults, cfg, dailyCloses);
 
         results.push({
