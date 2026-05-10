@@ -1,4 +1,3 @@
-// debug.js — v4.0 — test with correct API params
 const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
@@ -9,22 +8,21 @@ export default async function handler(req, res) {
 
     const to   = new Date().toISOString().split("T")[0];
     const from = new Date(Date.now() - 400*24*60*60*1000).toISOString().split("T")[0];
-
-    // GET /historical/{symbol}/?interval=1d&from=...&to=...
-    const url = `${BASE}/historical/${symbol}/?interval=${interval}&from=${from}&to=${to}`;
-    const r   = await fetch(url, { headers: { "X-API-Key": sahmkKey } });
+    const url  = `${BASE}/historical/${symbol}/?interval=${interval}&from=${from}&to=${to}`;
+    const r    = await fetch(url, { headers: { "X-API-Key": sahmkKey } });
     const json = await r.json();
     const candles = json.data || [];
     const sorted  = [...candles].sort((a,b) => new Date(a.date)-new Date(b.date));
 
     if (sorted.length < 10)
-      return res.status(200).json({ error: "بيانات غير كافية", count: sorted.length, url });
+      return res.status(200).json({ error: "بيانات غير كافية", count: sorted.length });
 
     const closes = sorted.map(c=>+c.close);
     const highs  = sorted.map(c=>+c.high);
     const lows   = sorted.map(c=>+c.low);
+    const dates  = sorted.map(c=>c.date);
 
-    // Stoch 5,3,3
+    // Stoch 5,3,3 — نحسب لكل شمعة
     const rawKs=[];
     for(let i=4;i<closes.length;i++){
       let hh=highs[i],ll=lows[i];
@@ -36,23 +34,27 @@ export default async function handler(req, res) {
     const dArr=[];
     for(let i=2;i<kArr.length;i++) dArr.push((kArr[i]+kArr[i-1]+kArr[i-2])/3);
 
-    const k=kArr[kArr.length-1], kPrev=kArr[kArr.length-2];
-    const d=dArr[dArr.length-1], dPrev=dArr[dArr.length-2];
-    const crossedLastBar = kPrev<dPrev && k>d;
-    const kAbovePrev     = kPrev>dPrev;
+    // آخر 10 قيم مع التاريخ
+    const offset = closes.length - dArr.length; // فرق الفهرس
+    const last10 = dArr.slice(-10).map((d,i) => {
+      const idx = dArr.length - 10 + i;
+      const k   = kArr[idx];
+      const kPrev = kArr[idx-1];
+      const dPrev = dArr[idx-1];
+      const dateIdx = idx + offset + 4 + 2; // تعويض rawKs و smooth و dPeriod
+      return {
+        date:  dates[Math.min(dateIdx, dates.length-1)],
+        k:     +k.toFixed(2),
+        d:     +d.toFixed(2),
+        cross: kPrev !== undefined && kPrev < dPrev && k > d ? "🔴 CROSS" : k > d ? "🔵 ABOVE" : "⬇ BELOW"
+      };
+    });
 
     return res.status(200).json({
-      symbol, interval, url,
+      symbol, interval,
       total_candles: sorted.length,
-      first_date: sorted[0]?.date,
-      last_date:  sorted[sorted.length-1]?.date,
-      last5: sorted.slice(-5).map(c=>({date:c.date,close:c.close})),
-      stoch: {
-        k:+k.toFixed(2), kPrev:+kPrev.toFixed(2),
-        d:+d.toFixed(2),  dPrev:+dPrev.toFixed(2),
-        crossedLastBar, kAbovePrev,
-        status: crossedLastBar?"يعبر الآن": (k>d&&kAbovePrev)?"فوق":"تحت"
-      }
+      last_date: sorted[sorted.length-1]?.date,
+      last10_kd: last10,
     });
   } catch(e) {
     return res.status(500).json({ error: e.message });
