@@ -21,10 +21,6 @@ export default async function handler(req, res) {
     const stocks = listData.data || listData.stocks || [];
 
     // ── 2. تحديد الـ interval بناءً على الإعدادات ──────────────
-    const tfMap = { daily: "1d", weekly: "1w", monthly: "1M" };
-    const stochInterval = tfMap[cfg.stochTF] || "1d";
-    const dmaInterval   = tfMap[cfg.dmaTF]   || "1d";
-    const needSame      = stochInterval === dmaInterval;
 
     const results = [];
 
@@ -33,25 +29,35 @@ export default async function handler(req, res) {
       if (!symbol) continue;
 
       try {
-        // جلب بيانات Stochastic
-        const stochData = await fetchOHLC(sahmkKey, symbol, stochInterval, 120);
-        if (!stochData || stochData.closes.length < 60) continue;
+        // ── جلب البيانات لكل فاصل مفعّل ────────────────────
+        const stochResults = {}, dmaResults = {};
 
-        // جلب بيانات DMA (نفس الطلب إذا نفس الـ TF)
-        const dmaData = needSame ? stochData : await fetchOHLC(sahmkKey, symbol, dmaInterval, 120);
-        if (!dmaData || dmaData.closes.length < 60) continue;
+        // Stochastic timeframes
+        for (const [key, tfKey, interval] of [
+          ["daily",  "stochDaily",   "1d"],
+          ["weekly", "stochWeekly",  "1w"],
+          ["monthly","stochMonthly", "1M"],
+        ]) {
+          if (!cfg[tfKey]) continue;
+          const data = await fetchOHLC(sahmkKey, symbol, interval, 120);
+          if (!data || data.closes.length < 60) continue;
+          stochResults[key] = calcStoch(data.closes, data.highs, data.lows, 5, 3, 3);
+        }
 
-        // ── حساب Stochastic ──────────────────────────────────
-        const stoch = calcStoch(
-          stochData.closes, stochData.highs, stochData.lows,
-          5, 3, 3
-        );
-
-        // ── حساب DMA ─────────────────────────────────────────
-        const dma = calcDMA(dmaData.closes, 10, 50, 10);
+        // DMA timeframes
+        for (const [key, tfKey, interval] of [
+          ["daily",  "dmaDaily",   "1d"],
+          ["weekly", "dmaWeekly",  "1w"],
+          ["monthly","dmaMonthly", "1M"],
+        ]) {
+          if (!cfg[tfKey]) continue;
+          const data = await fetchOHLC(sahmkKey, symbol, interval, 120);
+          if (!data || data.closes.length < 60) continue;
+          dmaResults[key] = calcDMA(data.closes, 10, 50, 10);
+        }
 
         // ── تقييم الشروط ──────────────────────────────────────
-        const { pass, ...vals } = evalSignal(stoch, dma, cfg);
+        const { pass, ...vals } = evalSignal(stochResults, dmaResults, cfg);
 
         results.push({
           symbol,
@@ -139,27 +145,54 @@ function ema(arr, period) {
   return v;
 }
 
-// ── تقييم الشروط ─────────────────────────────────────────────────
-function evalSignal(stoch, dma, cfg) {
-  const { k, d, kPrev, dPrev } = stoch;
-  const { dif, difma, difPrev, difmaPrev } = dma;
-
+// ── تقييم الشروط — كل فاصل مستقل ────────────────────────────────
+function evalSignal(stochResults, dmaResults, cfg) {
   const crosses = (a, b, ap, bp) => ap !== undefined && bp !== undefined && ap < bp && a > b;
   const above   = (a, b, ap, bp) => a > b && !crosses(a, b, ap, bp);
 
-  let stochOk = cfg.stochMode === "يعبر الآن"
-    ? crosses(k, d, kPrev, dPrev)
-    : above(k, d, kPrev, dPrev);
+  // ── Stochastic: كل فاصل مفعّل يجب أن يمر ───────────────────
+  const stochTFs = [
+    { active: cfg.stochDaily,   mode: cfg.stochDailyMode,   data: stochResults.daily   },
+    { active: cfg.stochWeekly,  mode: cfg.stochWeeklyMode,  data: stochResults.weekly  },
+    { active: cfg.stochMonthly, mode: cfg.stochMonthlyMode, data: stochResults.monthly },
+  ].filter(t => t.active && t.data);
 
-  if (cfg.stochOS  && stochOk) stochOk = kPrev < cfg.stochOSLevel;
-  if (cfg.stochMid && stochOk) stochOk = k > 50;
+  // إذا لا يوجد فاصل مفعّل → pass تلقائياً
+  const stochOk = stochTFs.length === 0 || stochTFs.every(t => {
+    const { k, d, kPrev, dPrev } = t.data;
+    let ok = t.mode === "يعبر الآن"
+      ? crosses(k, d, kPrev, dPrev)
+      : above(k, d, kPrev, dPrev);
+    if (cfg.stochOS  && ok) ok = kPrev < cfg.stochOSLevel;
+    if (cfg.stochMid && ok) ok = k > 50;
+    return ok;
+  });
 
-  let dmaOk = cfg.dmaMode === "يعبر الآن"
-    ? crosses(dif, difma, difPrev, difmaPrev)
-    : above(dif, difma, difPrev, difmaPrev);
+  // ── DMA: كل فاصل مفعّل يجب أن يمر ─────────────────────────
+  const dmaTFs = [
+    { active: cfg.dmaDaily,   mode: cfg.dmaDailyMode,   data: dmaResults.daily   },
+    { active: cfg.dmaWeekly,  mode: cfg.dmaWeeklyMode,  data: dmaResults.weekly  },
+    { active: cfg.dmaMonthly, mode: cfg.dmaMonthlyMode, data: dmaResults.monthly },
+  ].filter(t => t.active && t.data);
 
-  if (cfg.dmaZero  && dmaOk) dmaOk = dif > 0;
-  if (cfg.dmaSMA50 && dmaOk) dmaOk = true; // يُحسب في fetchOHLC إذا احتجت
+  const dmaOk = dmaTFs.length === 0 || dmaTFs.every(t => {
+    const { dif, difma, difPrev, difmaPrev } = t.data;
+    let ok = t.mode === "يعبر الآن"
+      ? crosses(dif, difma, difPrev, difmaPrev)
+      : above(dif, difma, difPrev, difmaPrev);
+    if (cfg.dmaZero && ok) ok = dif > 0;
+    return ok;
+  });
 
-  return { pass: stochOk && dmaOk };
+  // آخر قيم متاحة للعرض
+  const lastStoch = stochResults.daily || stochResults.weekly || stochResults.monthly || {};
+  const lastDma   = dmaResults.daily   || dmaResults.weekly   || dmaResults.monthly   || {};
+
+  return {
+    pass:  stochOk && dmaOk,
+    k:     lastStoch.k,
+    d:     lastStoch.d,
+    dif:   lastDma.dif,
+    difma: lastDma.difma,
+  };
 }
