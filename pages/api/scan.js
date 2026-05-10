@@ -15,17 +15,15 @@ export default async function handler(req, res) {
 
   try {
     // ── 1. جلب قائمة أسهم TASI فقط ──────────────────────────
-    // GET /companies/?market=TASI&limit=500
     const listRes = await fetch(`${BASE}/companies/?market=TASI&limit=500`, {
       headers: { "X-API-Key": sahmkKey },
     });
     if (!listRes.ok) return res.status(500).json({ error: `فشل جلب الأسهم: ${listRes.status}` });
 
     const listData = await listRes.json();
-    // يرجع: { results: [{symbol, name_ar, name_en, market, status}], count, total }
     const stocks = (listData.results || []).filter(s =>
       s.symbol &&
-      /^[1-9]\d{3}$/.test(s.symbol) && // 4 أرقام تبدأ بـ 1-9
+      /^[1-9]\d{3}$/.test(s.symbol) &&
       s.market === "TASI" &&
       s.status === "active"
     );
@@ -38,8 +36,6 @@ export default async function handler(req, res) {
     for (const stock of stocks) {
       const symbol = stock.symbol;
       try {
-        // ── 2. جلب OHLC لكل فاصل مفعّل ────────────────────
-        // GET /historical/{symbol}/?interval=1d&from=...&to=...
         const stochResults = {}, dmaResults = {};
 
         for (const [key, cfgKey, interval] of [
@@ -62,7 +58,14 @@ export default async function handler(req, res) {
           if (data) dmaResults[key] = calcDMA(data.closes, 10, 50, 10);
         }
 
-        const evaluation = evalSignal(stochResults, dmaResults, cfg);
+        // جلب closes اليومية للـ SMA50 إذا احتجنا
+        let dailyCloses = null;
+        if ([cfg.stochDailySMA50,cfg.stochWeeklySMA50,cfg.stochMonthlySMA50,
+             cfg.dmaDailySMA50,cfg.dmaWeeklySMA50,cfg.dmaMonthlySMA50].some(Boolean)) {
+          const dData = await fetchOHLC(sahmkKey, symbol, "1d");
+          if (dData) dailyCloses = dData.closes;
+        }
+        const evaluation = evalSignal(stochResults, dmaResults, cfg, dailyCloses);
 
         results.push({
           symbol,
@@ -83,27 +86,22 @@ export default async function handler(req, res) {
   }
 }
 
-// ── جلب OHLC — interval: 1d / 1w / 1m ───────────────────────────
+// ── جلب OHLC ─────────────────────────────────────────────────────
 async function fetchOHLC(apiKey, symbol, interval) {
   const to   = new Date().toISOString().split("T")[0];
-  // يومي: سنة كاملة (~248 شمعة) | أسبوعي: سنتان | شهري: 5 سنوات
   const days = interval === "1d" ? 400 : interval === "1w" ? 730 : 1825;
   const from = new Date(Date.now() - days*24*60*60*1000).toISOString().split("T")[0];
 
-  // GET /historical/{symbol}/?interval=1d&from=...&to=...
   const url = `${BASE}/historical/${symbol}/?interval=${interval}&from=${from}&to=${to}`;
   const r   = await fetch(url, { headers: { "X-API-Key": apiKey } });
   if (!r.ok) return null;
 
   const json    = await r.json();
-  // البيانات في حقل "data" حسب الوثائق الرسمية
   const candles = json.data || [];
   if (candles.length < 10) return null;
 
-  // الأقدم أولاً (الـ API يرجع الأحدث أولاً)
   const sorted = [...candles].sort((a, b) => new Date(a.date) - new Date(b.date));
 
-  // تحقق: آخر شمعة لا تكون أقدم من 7 أيام
   const lastDate = new Date(sorted[sorted.length-1].date);
   if ((Date.now() - lastDate) / 86400000 > 7) return null;
 
@@ -116,28 +114,37 @@ async function fetchOHLC(apiKey, symbol, interval) {
 
 // ── Stochastic 5,3,3 ─────────────────────────────────────────────
 function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
-  const rawKs = [];
+  const rawK = [];
   for (let i = kPeriod-1; i < closes.length; i++) {
     let hh = highs[i], ll = lows[i];
-    for (let j = i-kPeriod+1; j <= i; j++) { hh = Math.max(hh, highs[j]); ll = Math.min(ll, lows[j]); }
-    rawKs.push(hh === ll ? 50 : ((closes[i]-ll)/(hh-ll))*100);
+    for (let j = i-kPeriod+1; j <= i; j++) {
+      if (highs[j] > hh) hh = highs[j];
+      if (lows[j]  < ll) ll = lows[j];
+    }
+    rawK.push(hh === ll ? 50 : ((closes[i]-ll)/(hh-ll))*100);
   }
-  const kArr = [];
-  for (let i = smooth-1; i < rawKs.length; i++)
-    kArr.push((rawKs[i]+rawKs[i-1]+rawKs[i-2])/smooth);
-  const dArr = [];
-  for (let i = dPeriod-1; i < kArr.length; i++)
-    dArr.push((kArr[i]+kArr[i-1]+kArr[i-2])/dPeriod);
 
-  const k     = kArr[kArr.length-1];
-  const kPrev = kArr[kArr.length-2];
-  const d     = dArr[dArr.length-1];
-  const dPrev = dArr[dArr.length-2];
+  const K = [];
+  for (let i = smooth-1; i < rawK.length; i++) {
+    let sum = 0;
+    for (let j = i-smooth+1; j <= i; j++) sum += rawK[j];
+    K.push(sum / smooth);
+  }
 
-  // يعبر الآن: kPrev كان تحت dPrev، وk الآن فوق d
+  const D = [];
+  for (let i = dPeriod-1; i < K.length; i++) {
+    let sum = 0;
+    for (let j = i-dPeriod+1; j <= i; j++) sum += K[j];
+    D.push(sum / dPeriod);
+  }
+
+  const k     = K[K.length-1];
+  const kPrev = K[K.length-2];
+  const d     = D[D.length-1];
+  const dPrev = D[D.length-2];
+
   const crossedLastBar = kPrev < dPrev && k > d;
-  // فوق: k فوق d الآن، وكان فوقه في الشمعة السابقة أيضاً
-  const kAbovePrev = kPrev > dPrev;
+  const kAbovePrev     = kPrev > dPrev;
 
   return { k, kPrev, d, dPrev, crossedLastBar, kAbovePrev };
 }
@@ -169,35 +176,45 @@ function calcDMA(closes, fast, slow, signal) {
 }
 
 // ── تقييم الشروط ─────────────────────────────────────────────────
-function evalSignal(stochResults, dmaResults, cfg) {
+function evalSignal(stochResults, dmaResults, cfg, closes) {
+  // SMA50 للسعر الحالي
+  const sma50 = closes && closes.length >= 50
+    ? closes.slice(-50).reduce((a,b)=>a+b)/50
+    : null;
+  const price = closes && closes.length ? closes[closes.length-1] : null;
+  const aboveSMA50 = sma50 !== null && price !== null && price > sma50;
+
   const stochTFs = [
-    { active: cfg.stochDaily,   mode: cfg.stochDailyMode,   data: stochResults.daily   },
-    { active: cfg.stochWeekly,  mode: cfg.stochWeeklyMode,  data: stochResults.weekly  },
-    { active: cfg.stochMonthly, mode: cfg.stochMonthlyMode, data: stochResults.monthly },
+    { active: cfg.stochDaily,   mode: cfg.stochDailyMode,   data: stochResults.daily,
+      osKey: cfg.stochDailyOS,  osLvl: cfg.stochDailyOSLevel,  sma50: cfg.stochDailySMA50  },
+    { active: cfg.stochWeekly,  mode: cfg.stochWeeklyMode,  data: stochResults.weekly,
+      osKey: cfg.stochWeeklyOS, osLvl: cfg.stochWeeklyOSLevel, sma50: cfg.stochWeeklySMA50 },
+    { active: cfg.stochMonthly, mode: cfg.stochMonthlyMode, data: stochResults.monthly,
+      osKey: cfg.stochMonthlyOS,osLvl: cfg.stochMonthlyOSLevel,sma50: cfg.stochMonthlySMA50},
   ].filter(t => t.active && t.data);
 
   const stochOk = stochTFs.length === 0 || stochTFs.every(t => {
-    const { k, d, crossedLastBar, kAbovePrev } = t.data;
-    let ok = t.mode === "يعبر الآن"
-      ? crossedLastBar
-      : (k > d && kAbovePrev); // فوق = K فوق D الآن وفي الشمعة السابقة
-    if (cfg.stochOS  && ok) ok = t.data.kPrev < cfg.stochOSLevel;
-    if (cfg.stochMid && ok) ok = k > 50;
+    const { k, d, kPrev, crossedLastBar, kAbovePrev } = t.data;
+    let ok = t.mode === "يعبر الآن" ? crossedLastBar : (k > d && kAbovePrev);
+    if (t.osKey  && ok) ok = kPrev < (t.osLvl ?? 20);
+    if (t.sma50  && ok) ok = aboveSMA50;
     return ok;
   });
 
   const dmaTFs = [
-    { active: cfg.dmaDaily,   mode: cfg.dmaDailyMode,   data: dmaResults.daily   },
-    { active: cfg.dmaWeekly,  mode: cfg.dmaWeeklyMode,  data: dmaResults.weekly  },
-    { active: cfg.dmaMonthly, mode: cfg.dmaMonthlyMode, data: dmaResults.monthly },
+    { active: cfg.dmaDaily,   mode: cfg.dmaDailyMode,   data: dmaResults.daily,
+      zero: cfg.dmaDailyZero,  sma50: cfg.dmaDailySMA50   },
+    { active: cfg.dmaWeekly,  mode: cfg.dmaWeeklyMode,  data: dmaResults.weekly,
+      zero: cfg.dmaWeeklyZero, sma50: cfg.dmaWeeklySMA50  },
+    { active: cfg.dmaMonthly, mode: cfg.dmaMonthlyMode, data: dmaResults.monthly,
+      zero: cfg.dmaMonthlyZero,sma50: cfg.dmaMonthlySMA50 },
   ].filter(t => t.active && t.data);
 
   const dmaOk = dmaTFs.length === 0 || dmaTFs.every(t => {
     const { dif, difma, crossedLastBar, difAbovePrev } = t.data;
-    let ok = t.mode === "يعبر الآن"
-      ? crossedLastBar
-      : (dif > difma && difAbovePrev);
-    if (cfg.dmaZero && ok) ok = dif > 0;
+    let ok = t.mode === "يعبر الآن" ? crossedLastBar : (dif > difma && difAbovePrev);
+    if (t.zero  && ok) ok = dif > 0;
+    if (t.sma50 && ok) ok = aboveSMA50;
     return ok;
   });
 
