@@ -1,4 +1,4 @@
-// pages/api/scan.js — v3.1 — filter 1-8xxx, sort fix, crossedLastBar
+// pages/api/scan.js — v3.2 — 300 candles, staleness check, crossedLastBar
 
 const BASE = "https://app.sahmk.sa/api/v1";
 
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
       const data = await fetchOHLC(sahmkKey, symbol, "1d", 10);
       return res.status(200).json({ symbol, raw: data });
     }
-    return res.status(200).json({ version: "3.1", filter: "1-8xxx-sort-crossedLastBar" });
+    return res.status(200).json({ version: "3.2", filter: "1-8xxx-300candles-staleness" });
   }
 
   if (req.method !== "POST")
@@ -110,25 +110,28 @@ async function fetchOHLC(apiKey, symbol, interval, limit = 120) {
   const periodMap = { "1d": "daily", "1w": "weekly", "1M": "monthly" };
   const period    = periodMap[interval] || "daily";
 
-  const url = `${BASE}/historical/${symbol}/?period=${period}&limit=${limit}`;
+  const url = `${BASE}/historical/${symbol}/?period=${period}&limit=300`;
   const r   = await fetch(url, { headers: { "X-API-Key": apiKey } });
   if (!r.ok) return null;
 
   const json    = await r.json();
-  // Sahmk يرجع: { results: [{date, open, high, low, close, volume}] }
   const candles = json.results || json.data || json.candles || [];
   if (candles.length < 10) return null;
 
-  // الأقدم أولاً — نرتب صراحةً بالتاريخ
+  // الأقدم أولاً
   const sorted = [...candles].sort((a, b) => {
     const da = new Date(a.date || a.datetime || a.timestamp || 0);
     const db = new Date(b.date || b.datetime || b.timestamp || 0);
     if (isNaN(da) || isNaN(db)) return 0;
-    return da - db; // تصاعدي: الأقدم أولاً
+    return da - db;
   });
 
-  // تحقق: آخر شمعة يجب أن تكون الأحدث
   if (sorted.length < 10) return null;
+
+  // تحقق: آخر شمعة لا تكون أقدم من 7 أيام (السوق مغلق عطل)
+  const lastDate = new Date(sorted[sorted.length - 1].date || 0);
+  const daysDiff = (Date.now() - lastDate) / (1000 * 60 * 60 * 24);
+  if (daysDiff > 7) return null; // بيانات قديمة جداً
 
   return {
     closes: sorted.map(c => +c.close),
