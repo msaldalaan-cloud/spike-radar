@@ -3,9 +3,16 @@
 const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
-  // GET للتحقق من الإصدار
-  if (req.method === "GET")
+  // GET للتحقق من الإصدار أو debug سهم معين
+  if (req.method === "GET") {
+    const symbol = req.query.symbol;
+    if (symbol) {
+      const sahmkKey = process.env.SAHMK_API_KEY;
+      const data = await fetchOHLC(sahmkKey, symbol, "1d", 10);
+      return res.status(200).json({ symbol, raw: data });
+    }
     return res.status(200).json({ version: "3.1", filter: "1-8xxx-sort-crossedLastBar" });
+  }
 
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
