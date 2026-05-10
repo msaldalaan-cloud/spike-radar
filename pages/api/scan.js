@@ -198,10 +198,8 @@ function calcDMA(closes, fast, slow, signal) {
 
 // ── تقييم الشروط ─────────────────────────────────────────────────
 function evalSignal(stochResults, dmaResults, cfg, closes) {
-  // SMA50 للسعر الحالي
   const sma50 = closes && closes.length >= 50
-    ? closes.slice(-50).reduce((a,b)=>a+b)/50
-    : null;
+    ? closes.slice(-50).reduce((a,b)=>a+b)/50 : null;
   const price = closes && closes.length ? closes[closes.length-1] : null;
   const aboveSMA50 = sma50 !== null && price !== null && price > sma50;
 
@@ -212,13 +210,20 @@ function evalSignal(stochResults, dmaResults, cfg, closes) {
       osKey: cfg.stochWeeklyOS, osLvl: cfg.stochWeeklyOSLevel, sma50: cfg.stochWeeklySMA50 },
     { active: cfg.stochMonthly, mode: cfg.stochMonthlyMode, data: stochResults.monthly,
       osKey: cfg.stochMonthlyOS,osLvl: cfg.stochMonthlyOSLevel,sma50: cfg.stochMonthlySMA50},
-  ].filter(t => t.active && t.data);
+  ].filter(t => t.active);
+
+  // إذا فاصل مفعّل لكن لا بيانات → فشل تلقائي
+  if (stochTFs.some(t => !t.data)) return { pass: false };
 
   const stochOk = stochTFs.length === 0 || stochTFs.every(t => {
-    const { k, d, kPrev, crossedLastBar, kAbovePrev } = t.data;
-    let ok = t.mode === "يعبر الآن" ? crossedLastBar : (k > d && kAbovePrev);
-    if (t.osKey  && ok) ok = kPrev < (t.osLvl ?? 20);
-    if (t.sma50  && ok) ok = aboveSMA50;
+    const { k, d, kPrev, dPrev, crossedLastBar, kAbovePrev } = t.data;
+    // crossedLastBar: kPrev < dPrev AND k > d (تقاطع على آخر شمعة)
+    // kAbovePrev: kPrev > dPrev (K كانت فوق D في الشمعة السابقة أيضاً)
+    let ok = t.mode === "يعبر الآن"
+      ? (kPrev < dPrev && k > d)   // تقاطع صاعد على آخر شمعة
+      : (k > d && kPrev > dPrev);  // K فوق D الآن وكانت فوقها سابقاً
+    if (t.osKey && ok) ok = kPrev < (t.osLvl ?? 20);
+    if (t.sma50 && ok) ok = aboveSMA50;
     return ok;
   });
 
@@ -229,11 +234,16 @@ function evalSignal(stochResults, dmaResults, cfg, closes) {
       zero: cfg.dmaWeeklyZero, sma50: cfg.dmaWeeklySMA50  },
     { active: cfg.dmaMonthly, mode: cfg.dmaMonthlyMode, data: dmaResults.monthly,
       zero: cfg.dmaMonthlyZero,sma50: cfg.dmaMonthlySMA50 },
-  ].filter(t => t.active && t.data);
+  ].filter(t => t.active);
+
+  // إذا فاصل مفعّل لكن لا بيانات → فشل تلقائي
+  if (dmaTFs.some(t => !t.data)) return { pass: false };
 
   const dmaOk = dmaTFs.length === 0 || dmaTFs.every(t => {
-    const { dif, difma, crossedLastBar, difAbovePrev } = t.data;
-    let ok = t.mode === "يعبر الآن" ? crossedLastBar : (dif > difma && difAbovePrev);
+    const { dif, difma, difPrev, difmaPrev, crossedLastBar, difAbovePrev } = t.data;
+    let ok = t.mode === "يعبر الآن"
+      ? (difPrev < difmaPrev && dif > difma)
+      : (dif > difma && difPrev > difmaPrev);
     if (t.zero  && ok) ok = dif > 0;
     if (t.sma50 && ok) ok = aboveSMA50;
     return ok;
