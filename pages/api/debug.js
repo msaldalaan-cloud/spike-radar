@@ -59,15 +59,18 @@ export default async function handler(req, res) {
     for(let i=2;i<K.length;i++) D.push((K[i]+K[i-1]+K[i-2])/3);
 
     // K أطول من D بـ 2 — نأخذ K المقابلة لآخر D
-    const n=D.length-1;
-    const d=D[n], dPrev=D[n-1];
-    const k=K[n+2], kPrev=K[n+1];
+    // %K = K (أسرع), %D = D (أبطأ = SMA of K)
+    const n     = K.length - 1;
+    const k     = K[n];
+    const kPrev = K[n-1];
+    const d     = D[n - 2];
+    const dPrev = D[n - 3];
 
-    const last5 = D.slice(-5).map((dv,i)=>({
-      week: candles[candles.length - D.length + D.length-5+i]?.date,
-      k: +K[D.length-5+i+2].toFixed(2),
-      d: +dv.toFixed(2),
-      status: K[D.length-5+i+2] > dv ? "K فوق D ✅" : "D فوق K ❌"
+    const last5 = K.slice(-5).map((kv,i)=>({
+      week: candles[candles.length - K.length + K.length-5+i]?.date,
+      k: +kv.toFixed(2),
+      d: +D[K.length-5+i-2]?.toFixed(2),
+      status: kv > (D[K.length-5+i-2]||0) ? "K فوق D ✅" : "D فوق K ❌"
     }));
 
     return res.status(200).json({
