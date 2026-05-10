@@ -207,12 +207,13 @@ function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
     D.push(sum / dPeriod);
   }
 
-  // K أطول من D بـ (dPeriod-1) — نأخذ K المقابلة لآخر D
-  const n     = D.length - 1;
-  const d     = D[n];
-  const dPrev = D[n-1];
-  const k     = K[n + (dPeriod-1)];
-  const kPrev = K[n + (dPeriod-1) - 1];
+  // D أطول من K بـ (dPeriod-1) — نأخذ D المقابلة لآخر K
+  // %K = K (الأسرع) , %D = D (الأبطأ = SMA of K)
+  const n      = K.length - 1;
+  const k      = K[n];                    // آخر %K
+  const kPrev  = K[n-1];
+  const d      = D[n - (dPeriod-1)];     // %D المقابلة لآخر %K
+  const dPrev  = D[n - (dPeriod-1) - 1];
 
   const crossedLastBar = kPrev < dPrev && k > d;
   const kAbovePrev     = kPrev > dPrev;
