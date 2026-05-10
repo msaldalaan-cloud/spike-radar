@@ -1,84 +1,67 @@
-// pages/api/scan.js — v3.4 — json.data fix, 20-candle aware
+// pages/api/scan.js — v4.0 — based on official Sahmk API docs
 
 const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
-  // GET للتحقق من الإصدار أو debug سهم معين
-  if (req.method === "GET") {
-    const symbol = req.query.symbol;
-    if (symbol) {
-      const sahmkKey = process.env.SAHMK_API_KEY;
-      const data = await fetchOHLC(sahmkKey, symbol, "1d", 10);
-      return res.status(200).json({ symbol, raw: data });
-    }
-    return res.status(200).json({ version: "3.4", filter: "data-field-fix-kAbovePrev" });
-  }
-
+  if (req.method === "GET")
+    return res.status(200).json({ version: "4.0", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
   const { cfg } = req.body;
   const sahmkKey = process.env.SAHMK_API_KEY;
-
   if (!sahmkKey)
-    return res.status(500).json({ error: "SAHMK_API_KEY غير موجود في Environment Variables" });
+    return res.status(500).json({ error: "SAHMK_API_KEY غير موجود" });
 
   try {
-    // ── 1. جلب قائمة الأسهم ──────────────────────────────────
+    // ── 1. جلب قائمة أسهم TASI فقط ──────────────────────────
+    // GET /companies/?market=TASI&limit=500
     const listRes = await fetch(`${BASE}/companies/?market=TASI&limit=500`, {
       headers: { "X-API-Key": sahmkKey },
     });
-    if (!listRes.ok) {
-      const err = await listRes.text();
-      return res.status(500).json({ error: `فشل جلب الأسهم: ${listRes.status} — ${err}` });
-    }
+    if (!listRes.ok) return res.status(500).json({ error: `فشل جلب الأسهم: ${listRes.status}` });
+
     const listData = await listRes.json();
-    const stocks   = listData.results || [];
+    // يرجع: { results: [{symbol, name_ar, name_en, market, status}], count, total }
+    const stocks = (listData.results || []).filter(s =>
+      s.symbol &&
+      /^[1-9]\d{3}$/.test(s.symbol) && // 4 أرقام تبدأ بـ 1-9
+      s.market === "TASI" &&
+      s.status === "active"
+    );
 
     if (!stocks.length)
       return res.status(200).json({ results: [], scannedAt: new Date().toISOString() });
 
     const results = [];
 
-    // فلترة أسهم TASI الحقيقية — تبدأ بـ 1-8 وليس 0
-    const validStocks = stocks.filter(s =>
-      s.symbol &&
-      /^[1-8]\d{3}$/.test(s.symbol) // 4 أرقام تبدأ بـ 1-8
-    );
-
-    for (const stock of validStocks) {
+    for (const stock of stocks) {
       const symbol = stock.symbol;
-
       try {
         // ── 2. جلب OHLC لكل فاصل مفعّل ────────────────────
+        // GET /historical/{symbol}/?interval=1d&from=...&to=...
         const stochResults = {}, dmaResults = {};
 
         for (const [key, cfgKey, interval] of [
           ["daily",   "stochDaily",   "1d"],
           ["weekly",  "stochWeekly",  "1w"],
-          ["monthly", "stochMonthly", "1M"],
+          ["monthly", "stochMonthly", "1m"],
         ]) {
           if (!cfg[cfgKey]) continue;
-          const data = await fetchOHLC(sahmkKey, symbol, interval, 120);
+          const data = await fetchOHLC(sahmkKey, symbol, interval);
           if (data) stochResults[key] = calcStoch(data.closes, data.highs, data.lows, 5, 3, 3);
         }
 
         for (const [key, cfgKey, interval] of [
           ["daily",   "dmaDaily",   "1d"],
           ["weekly",  "dmaWeekly",  "1w"],
-          ["monthly", "dmaMonthly", "1M"],
+          ["monthly", "dmaMonthly", "1m"],
         ]) {
           if (!cfg[cfgKey]) continue;
-          // تجنب إعادة الجلب إذا نفس البيانات محسوبة في stoch
-          const existing = stochResults[key];
-          if (existing && cfg[`stoch${key.charAt(0).toUpperCase()+key.slice(1)}`]) {
-            // أعد جلب لأن DMA يحتاج closes فقط
-          }
-          const data = await fetchOHLC(sahmkKey, symbol, interval, 120);
+          const data = await fetchOHLC(sahmkKey, symbol, interval);
           if (data) dmaResults[key] = calcDMA(data.closes, 10, 50, 10);
         }
 
-        // ── 3. تقييم الشروط ──────────────────────────────────
         const evaluation = evalSignal(stochResults, dmaResults, cfg);
 
         results.push({
@@ -90,11 +73,7 @@ export default async function handler(req, res) {
           dif:   evaluation.dif  != null ? +evaluation.dif.toFixed(4)  : null,
           difma: evaluation.difma!= null ? +evaluation.difma.toFixed(4): null,
         });
-
-      } catch (e) {
-        // تجاهل الأسهم التي فشل حسابها
-        continue;
-      }
+      } catch { continue; }
     }
 
     return res.status(200).json({ results, scannedAt: new Date().toISOString() });
@@ -104,39 +83,29 @@ export default async function handler(req, res) {
   }
 }
 
-// ── جلب OHLC من Sahmk ────────────────────────────────────────────
+// ── جلب OHLC — interval: 1d / 1w / 1m ───────────────────────────
 async function fetchOHLC(apiKey, symbol, interval) {
-  const to  = new Date().toISOString().split("T")[0];
-  let url;
+  const to   = new Date().toISOString().split("T")[0];
+  // يومي: سنة كاملة (~248 شمعة) | أسبوعي: سنتان | شهري: 5 سنوات
+  const days = interval === "1d" ? 400 : interval === "1w" ? 730 : 1825;
+  const from = new Date(Date.now() - days*24*60*60*1000).toISOString().split("T")[0];
 
-  if (interval === "1d") {
-    const from = new Date(Date.now() - 400*24*60*60*1000).toISOString().split("T")[0];
-    url = `${BASE}/historical/${symbol}/?period=daily&from=${from}&to=${to}`;
-  } else if (interval === "1w") {
-    const from = new Date(Date.now() - 730*24*60*60*1000).toISOString().split("T")[0];
-    url = `${BASE}/historical/${symbol}/?interval=1w&from=${from}&to=${to}`;
-  } else {
-    const from = new Date(Date.now() - 1825*24*60*60*1000).toISOString().split("T")[0];
-    url = `${BASE}/historical/${symbol}/?interval=1m&from=${from}&to=${to}`;
-  }
-
-  const r = await fetch(url, { headers: { "X-API-Key": apiKey } });
+  // GET /historical/{symbol}/?interval=1d&from=...&to=...
+  const url = `${BASE}/historical/${symbol}/?interval=${interval}&from=${from}&to=${to}`;
+  const r   = await fetch(url, { headers: { "X-API-Key": apiKey } });
   if (!r.ok) return null;
 
   const json    = await r.json();
-  const candles = json.data || json.results || json.candles || [];
+  // البيانات في حقل "data" حسب الوثائق الرسمية
+  const candles = json.data || [];
   if (candles.length < 10) return null;
 
-  const sorted = [...candles].sort((a, b) =>
-    new Date(a.date || 0) - new Date(b.date || 0)
-  );
-
-  if (sorted.length < 10) return null;
+  // الأقدم أولاً (الـ API يرجع الأحدث أولاً)
+  const sorted = [...candles].sort((a, b) => new Date(a.date) - new Date(b.date));
 
   // تحقق: آخر شمعة لا تكون أقدم من 7 أيام
-  const lastDate = new Date(sorted[sorted.length-1].date || 0);
-  const daysDiff = (Date.now() - lastDate) / (1000*60*60*24);
-  if (daysDiff > 7) return null;
+  const lastDate = new Date(sorted[sorted.length-1].date);
+  if ((Date.now() - lastDate) / 86400000 > 7) return null;
 
   return {
     closes: sorted.map(c => +c.close),
@@ -148,79 +117,59 @@ async function fetchOHLC(apiKey, symbol, interval) {
 // ── Stochastic 5,3,3 ─────────────────────────────────────────────
 function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
   const rawKs = [];
-  for (let i = kPeriod - 1; i < closes.length; i++) {
-    const hh = Math.max(...highs.slice(i - kPeriod + 1, i + 1));
-    const ll = Math.min(...lows.slice(i - kPeriod + 1, i + 1));
-    rawKs.push(hh === ll ? 50 : ((closes[i] - ll) / (hh - ll)) * 100);
+  for (let i = kPeriod-1; i < closes.length; i++) {
+    let hh = highs[i], ll = lows[i];
+    for (let j = i-kPeriod+1; j <= i; j++) { hh = Math.max(hh, highs[j]); ll = Math.min(ll, lows[j]); }
+    rawKs.push(hh === ll ? 50 : ((closes[i]-ll)/(hh-ll))*100);
   }
   const kArr = [];
-  for (let i = smooth - 1; i < rawKs.length; i++)
-    kArr.push(rawKs.slice(i - smooth + 1, i + 1).reduce((a, b) => a + b) / smooth);
+  for (let i = smooth-1; i < rawKs.length; i++)
+    kArr.push((rawKs[i]+rawKs[i-1]+rawKs[i-2])/smooth);
   const dArr = [];
-  for (let i = dPeriod - 1; i < kArr.length; i++)
-    dArr.push(kArr.slice(i - dPeriod + 1, i + 1).reduce((a, b) => a + b) / dPeriod);
+  for (let i = dPeriod-1; i < kArr.length; i++)
+    dArr.push((kArr[i]+kArr[i-1]+kArr[i-2])/dPeriod);
 
-  const k      = kArr[kArr.length - 1];
-  const kPrev  = kArr[kArr.length - 2];
-  const kPrev2 = kArr[kArr.length - 3];
-  const kPrev3 = kArr[kArr.length - 4];
-  const d      = dArr[dArr.length - 1];
-  const dPrev  = dArr[dArr.length - 2];
-  const dPrev2 = dArr[dArr.length - 3];
-  const dPrev3 = dArr[dArr.length - 4];
+  const k     = kArr[kArr.length-1];
+  const kPrev = kArr[kArr.length-2];
+  const d     = dArr[dArr.length-1];
+  const dPrev = dArr[dArr.length-2];
 
-  // يعبر الآن = K كانت تحت D في الشمعتين السابقتين وعبرت في الأخيرة
-  // شرط صارم: K < D في شمعتين متتاليتين قبل التقاطع
-  const wasBelow2Bars = kPrev2 !== undefined && dPrev2 !== undefined && kPrev2 < dPrev2;
-  const wasBelow1Bar  = kPrev  !== undefined && dPrev  !== undefined && kPrev  < dPrev;
-  const crossedLastBar = wasBelow1Bar && k > d;
+  // يعبر الآن: kPrev كان تحت dPrev، وk الآن فوق d
+  const crossedLastBar = kPrev < dPrev && k > d;
+  // فوق: k فوق d الآن، وكان فوقه في الشمعة السابقة أيضاً
+  const kAbovePrev = kPrev > dPrev;
 
-  // فوق = K فوق D الآن، والشمعة السابقة كانت أيضاً K فوق D
-  // يعني التقاطع حصل قبل الشمعة الأخيرة
-  const kAboveNow  = k > d;
-  const kAbovePrev = kPrev !== undefined && dPrev !== undefined && kPrev > dPrev;
-
-  return { k, kPrev, d, dPrev, crossedLastBar, kAboveNow, kAbovePrev };
+  return { k, kPrev, d, dPrev, crossedLastBar, kAbovePrev };
 }
 
 // ── DMA 10,50,10 ─────────────────────────────────────────────────
-// ملاحظة: يحتاج 60+ شمعة. مع 20 شمعة يومية لن يعمل.
-// للـ weekly/monthly قد يكون كافياً.
 function calcDMA(closes, fast, slow, signal) {
   if (closes.length < slow + signal) return null;
   const difArr = [];
-  for (let i = slow - 1; i < closes.length; i++) {
-    const sF = closes.slice(i - fast + 1, i + 1).reduce((a, b) => a + b) / fast;
-    const sS = closes.slice(i - slow + 1, i + 1).reduce((a, b) => a + b) / slow;
-    difArr.push(sF - sS);
+  for (let i = slow-1; i < closes.length; i++) {
+    let sF = 0, sS = 0;
+    for (let j = i-fast+1; j <= i; j++) sF += closes[j];
+    for (let j = i-slow+1; j <= i; j++) sS += closes[j];
+    difArr.push(sF/fast - sS/slow);
   }
-  const difma     = ema(difArr, signal);
-  const difmaPrev = ema(difArr.slice(0, -1), signal);
-  const dif       = difArr[difArr.length - 1];
-  const difPrev   = difArr[difArr.length - 2];
+  const k2 = 2/(signal+1);
+  let difma = difArr.slice(0, signal).reduce((a,b)=>a+b)/signal;
+  for (let i = signal; i < difArr.length; i++) difma = difArr[i]*k2 + difma*(1-k2);
 
-  // هل التقاطع حصل على الشمعة الأخيرة؟
-  const crossedLastBar = difPrev !== undefined && difmaPrev !== null &&
-    difPrev < difmaPrev && dif > difma;
+  let difmaPrev = difArr.slice(0, signal-1).reduce((a,b)=>a+b)/(signal-1);
+  for (let i = signal-1; i < difArr.length-1; i++) difmaPrev = difArr[i]*k2 + difmaPrev*(1-k2);
 
-  return { dif, difPrev, difma, difmaPrev, crossedLastBar };
+  const dif     = difArr[difArr.length-1];
+  const difPrev = difArr[difArr.length-2];
+
+  const crossedLastBar = difPrev < difmaPrev && dif > difma;
+  const difAbovePrev   = difPrev > difmaPrev;
+
+  return { dif, difPrev, difma, difmaPrev, crossedLastBar, difAbovePrev };
 }
 
-function ema(arr, period) {
-  if (!arr || arr.length < period) return null;
-  const k = 2 / (period + 1);
-  let v   = arr.slice(0, period).reduce((a, b) => a + b) / period;
-  for (let i = period; i < arr.length; i++) v = arr[i] * k + v * (1 - k);
-  return v;
-}
-
-// ── تقييم الشروط — كل فاصل مستقل ────────────────────────────────
+// ── تقييم الشروط ─────────────────────────────────────────────────
 function evalSignal(stochResults, dmaResults, cfg) {
-  const crosses = (a, b, ap, bp) =>
-    a != null && b != null && ap != null && bp != null && ap < bp && a > b;
-  const above = (a, b, ap, bp) =>
-    a != null && b != null && a > b && !crosses(a, b, ap, bp);
-
   const stochTFs = [
     { active: cfg.stochDaily,   mode: cfg.stochDailyMode,   data: stochResults.daily   },
     { active: cfg.stochWeekly,  mode: cfg.stochWeeklyMode,  data: stochResults.weekly  },
@@ -228,18 +177,11 @@ function evalSignal(stochResults, dmaResults, cfg) {
   ].filter(t => t.active && t.data);
 
   const stochOk = stochTFs.length === 0 || stochTFs.every(t => {
-    const { k, d, kPrev, dPrev, crossedLastBar, kAboveNow, kAbovePrev } = t.data;
-    let ok;
-    if (t.mode === "يعبر الآن") {
-      // يعبر الآن: K عبرت D في الشمعة الأخيرة فقط
-      // وكانت تحت D في الشمعة السابقة
-      ok = crossedLastBar === true;
-    } else {
-      // فوق: K فوق D الآن، وكانت فوق D في الشمعة السابقة أيضاً
-      // يعني التقاطع حصل قبل الشمعة الأخيرة
-      ok = kAboveNow && kAbovePrev;
-    }
-    if (cfg.stochOS  && ok) ok = kPrev < cfg.stochOSLevel;
+    const { k, d, crossedLastBar, kAbovePrev } = t.data;
+    let ok = t.mode === "يعبر الآن"
+      ? crossedLastBar
+      : (k > d && kAbovePrev); // فوق = K فوق D الآن وفي الشمعة السابقة
+    if (cfg.stochOS  && ok) ok = t.data.kPrev < cfg.stochOSLevel;
     if (cfg.stochMid && ok) ok = k > 50;
     return ok;
   });
@@ -251,25 +193,16 @@ function evalSignal(stochResults, dmaResults, cfg) {
   ].filter(t => t.active && t.data);
 
   const dmaOk = dmaTFs.length === 0 || dmaTFs.every(t => {
-    const { dif, difma, crossedLastBar } = t.data;
-    let ok;
-    if (t.mode === "يعبر الآن") {
-      ok = crossedLastBar === true;
-    } else {
-      ok = dif > difma && !crossedLastBar;
-    }
+    const { dif, difma, crossedLastBar, difAbovePrev } = t.data;
+    let ok = t.mode === "يعبر الآن"
+      ? crossedLastBar
+      : (dif > difma && difAbovePrev);
     if (cfg.dmaZero && ok) ok = dif > 0;
     return ok;
   });
 
-  const lastStoch = stochResults.daily || stochResults.weekly || stochResults.monthly || {};
-  const lastDma   = dmaResults.daily   || dmaResults.weekly   || dmaResults.monthly   || {};
+  const ls = stochResults.daily || stochResults.weekly || stochResults.monthly || {};
+  const ld = dmaResults.daily   || dmaResults.weekly   || dmaResults.monthly   || {};
 
-  return {
-    pass:  stochOk && dmaOk,
-    k:     lastStoch.k,
-    d:     lastStoch.d,
-    dif:   lastDma.dif,
-    difma: lastDma.difma,
-  };
+  return { pass: stochOk && dmaOk, k: ls.k, d: ls.d, dif: ld.dif, difma: ld.difma };
 }
