@@ -2,15 +2,22 @@ import { useState, useEffect } from "react";
 
 const DEFAULT_CFG = {
   // Stochastic — كل فاصل مستقل
-  stochDaily:  false, stochDailyMode:   "يعبر الآن",
-  stochWeekly: false, stochWeeklyMode:  "يعبر الآن",
-  stochMonthly:false, stochMonthlyMode: "يعبر الآن",
-  stochOS: false, stochOSLevel: 20, stochMid: false,
+  stochDaily:       false, stochDailyMode:   "يعبر الآن",
+  stochDailyOS:     false, stochDailyOSLevel:  20,
+  stochDailySMA50:  false,
+  stochWeekly:      false, stochWeeklyMode:  "يعبر الآن",
+  stochWeeklyOS:    false, stochWeeklyOSLevel: 20,
+  stochWeeklySMA50: false,
+  stochMonthly:     false, stochMonthlyMode: "يعبر الآن",
+  stochMonthlyOS:   false, stochMonthlyOSLevel:20,
+  stochMonthlySMA50:false,
   // DMA — كل فاصل مستقل
-  dmaDaily:    false, dmaDailyMode:     "يعبر الآن",
-  dmaWeekly:   false, dmaWeeklyMode:    "يعبر الآن",
-  dmaMonthly:  false, dmaMonthlyMode:   "يعبر الآن",
-  dmaZero: false, dmaSMA50: false,
+  dmaDaily:      false, dmaDailyMode:   "يعبر الآن",
+  dmaDailyZero:  false, dmaDailySMA50:  false,
+  dmaWeekly:     false, dmaWeeklyMode:  "يعبر الآن",
+  dmaWeeklyZero: false, dmaWeeklySMA50: false,
+  dmaMonthly:    false, dmaMonthlyMode: "يعبر الآن",
+  dmaMonthlyZero:false, dmaMonthlySMA50:false,
 };
 
 export default function Scanner() {
@@ -130,15 +137,16 @@ export default function Scanner() {
           <div className="card">
             <div className="sec-title">📊 STOCHASTIC 5,3,3</div>
             {[
-              ["daily",  "stochDaily",  "stochDailyMode",   "يومي"],
-              ["weekly", "stochWeekly", "stochWeeklyMode",  "أسبوعي"],
-              ["monthly","stochMonthly","stochMonthlyMode", "شهري"],
-            ].map(([,activeKey, modeKey, label]) => (
+              ["stochDaily",  "stochDailyMode",   "stochDailyOS",  "stochDailyOSLevel",  "stochDailySMA50",  "يومي"],
+              ["stochWeekly", "stochWeeklyMode",  "stochWeeklyOS", "stochWeeklyOSLevel", "stochWeeklySMA50", "أسبوعي"],
+              ["stochMonthly","stochMonthlyMode", "stochMonthlyOS","stochMonthlyOSLevel","stochMonthlySMA50","شهري"],
+            ].map(([activeKey, modeKey, osKey, osLvlKey, sma50Key, label]) => (
               <div key={activeKey} style={{ marginBottom:10, padding:"10px 12px", borderRadius:6,
                 background: cfg[activeKey] ? "rgba(14,165,233,0.08)" : "rgba(255,255,255,0.02)",
                 border: `1px solid ${cfg[activeKey] ? "rgba(14,165,233,0.3)" : "#1e3a5f"}`,
                 transition:"all .2s" }}>
-                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: cfg[activeKey] ? 10 : 0 }}>
+                {/* الفاصل + الشرط */}
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: cfg[activeKey] ? 8 : 0 }}>
                   <label className="cb" style={{ margin:0 }}>
                     <input type="checkbox" checked={cfg[activeKey]} onChange={e => set(activeKey, e.target.checked)} />
                     <span style={{ color: cfg[activeKey] ? "#e2e8f0" : "#64748b", fontWeight: cfg[activeKey] ? 600 : 400 }}>{label}</span>
@@ -152,40 +160,44 @@ export default function Scanner() {
                     </div>
                   )}
                 </div>
+                {/* الفلاتر الإضافية */}
+                {cfg[activeKey] && (
+                  <div style={{ paddingRight:4, borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:8 }}>
+                    {/* Oversold */}
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                      <label className="cb" style={{ margin:0, flex:1 }}>
+                        <input type="checkbox" checked={cfg[osKey]} onChange={e => set(osKey, e.target.checked)} />
+                        <span style={{ fontSize:10 }}>Oversold أقل من</span>
+                      </label>
+                      <input type="number" value={cfg[osLvlKey]} min={0} max={100}
+                        onChange={e => set(osLvlKey, +e.target.value)}
+                        style={{ width:55, padding:"3px 6px", fontSize:10 }} />
+                    </div>
+                    {/* SMA50 */}
+                    <label className="cb" style={{ margin:0 }}>
+                      <input type="checkbox" checked={cfg[sma50Key]} onChange={e => set(sma50Key, e.target.checked)} />
+                      <span style={{ fontSize:10 }}>السعر فوق SMA 50</span>
+                    </label>
+                  </div>
+                )}
               </div>
             ))}
-            <div style={{ borderTop:"1px solid #1e3a5f", paddingTop:10, marginTop:4 }}>
-              <label className="cb">
-                <input type="checkbox" checked={cfg.stochOS} onChange={e => set("stochOS",e.target.checked)} />
-                <span>تقاطع من منطقة Oversold</span>
-              </label>
-              {cfg.stochOS && (
-                <div style={{ paddingRight:22, marginBottom:8 }}>
-                  <div className="label">K كان أقل من</div>
-                  <input type="number" value={cfg.stochOSLevel} min={1} max={49}
-                    onChange={e => set("stochOSLevel",+e.target.value)} style={{ width:80 }} />
-                </div>
-              )}
-              <label className="cb">
-                <input type="checkbox" checked={cfg.stochMid} onChange={e => set("stochMid",e.target.checked)} />
-                <span>K فوق مستوى 50</span>
-              </label>
-            </div>
           </div>
 
           {/* DMA */}
           <div className="card">
             <div className="sec-title">📈 DMA 10,50,10</div>
             {[
-              ["daily",  "dmaDaily",   "dmaDailyMode",   "يومي"],
-              ["weekly", "dmaWeekly",  "dmaWeeklyMode",  "أسبوعي"],
-              ["monthly","dmaMonthly", "dmaMonthlyMode", "شهري"],
-            ].map(([,activeKey, modeKey, label]) => (
+              ["dmaDaily",  "dmaDailyMode",  "dmaDailyZero",  "dmaDailySMA50",  "يومي"],
+              ["dmaWeekly", "dmaWeeklyMode", "dmaWeeklyZero", "dmaWeeklySMA50", "أسبوعي"],
+              ["dmaMonthly","dmaMonthlyMode","dmaMonthlyZero","dmaMonthlySMA50","شهري"],
+            ].map(([activeKey, modeKey, zeroKey, sma50Key, label]) => (
               <div key={activeKey} style={{ marginBottom:10, padding:"10px 12px", borderRadius:6,
                 background: cfg[activeKey] ? "rgba(14,165,233,0.08)" : "rgba(255,255,255,0.02)",
                 border: `1px solid ${cfg[activeKey] ? "rgba(14,165,233,0.3)" : "#1e3a5f"}`,
                 transition:"all .2s" }}>
-                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: cfg[activeKey] ? 10 : 0 }}>
+                {/* الفاصل + الشرط */}
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: cfg[activeKey] ? 8 : 0 }}>
                   <label className="cb" style={{ margin:0 }}>
                     <input type="checkbox" checked={cfg[activeKey]} onChange={e => set(activeKey, e.target.checked)} />
                     <span style={{ color: cfg[activeKey] ? "#e2e8f0" : "#64748b", fontWeight: cfg[activeKey] ? 600 : 400 }}>{label}</span>
@@ -199,18 +211,21 @@ export default function Scanner() {
                     </div>
                   )}
                 </div>
+                {/* الفلاتر الإضافية */}
+                {cfg[activeKey] && (
+                  <div style={{ paddingRight:4, borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:8 }}>
+                    <label className="cb" style={{ margin:0, marginBottom:6 }}>
+                      <input type="checkbox" checked={cfg[zeroKey]} onChange={e => set(zeroKey, e.target.checked)} />
+                      <span style={{ fontSize:10 }}>DIF فوق الصفر</span>
+                    </label>
+                    <label className="cb" style={{ margin:0 }}>
+                      <input type="checkbox" checked={cfg[sma50Key]} onChange={e => set(sma50Key, e.target.checked)} />
+                      <span style={{ fontSize:10 }}>السعر فوق SMA 50</span>
+                    </label>
+                  </div>
+                )}
               </div>
             ))}
-            <div style={{ borderTop:"1px solid #1e3a5f", paddingTop:10, marginTop:4 }}>
-              <label className="cb">
-                <input type="checkbox" checked={cfg.dmaZero} onChange={e => set("dmaZero",e.target.checked)} />
-                <span>DIF فوق الصفر</span>
-              </label>
-              <label className="cb">
-                <input type="checkbox" checked={cfg.dmaSMA50} onChange={e => set("dmaSMA50",e.target.checked)} />
-                <span>السعر فوق SMA 50</span>
-              </label>
-            </div>
           </div>
 
           {/* الاستراتيجيات */}
