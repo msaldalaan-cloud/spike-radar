@@ -1,11 +1,11 @@
-// pages/api/scan.js — v3.0 — TASI only, valid symbols, crossedLastBar fix
+// pages/api/scan.js — v3.1 — filter 1-8xxx, sort fix, crossedLastBar
 
 const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   // GET للتحقق من الإصدار
   if (req.method === "GET")
-    return res.status(200).json({ version: "3.0", filter: "TASI-4digit-crossedLastBar" });
+    return res.status(200).json({ version: "3.1", filter: "1-8xxx-sort-crossedLastBar" });
 
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
@@ -33,8 +33,11 @@ export default async function handler(req, res) {
 
     const results = [];
 
-    // فلترة الأسهم الصحيحة فقط — 4 أرقام (TASI)
-    const validStocks = stocks.filter(s => s.symbol && /^\d{4}$/.test(s.symbol));
+    // فلترة أسهم TASI الحقيقية — تبدأ بـ 1-8 وليس 0
+    const validStocks = stocks.filter(s =>
+      s.symbol &&
+      /^[1-8]\d{3}$/.test(s.symbol) // 4 أرقام تبدأ بـ 1-8
+    );
 
     for (const stock of validStocks) {
       const symbol = stock.symbol;
@@ -109,12 +112,16 @@ async function fetchOHLC(apiKey, symbol, interval, limit = 120) {
   const candles = json.results || json.data || json.candles || [];
   if (candles.length < 10) return null;
 
-  // الأقدم أولاً — Sahmk يرجع الأحدث أولاً دائماً
+  // الأقدم أولاً — نرتب صراحةً بالتاريخ
   const sorted = [...candles].sort((a, b) => {
-    const da = new Date(a.date || a.datetime || a.timestamp);
-    const db = new Date(b.date || b.datetime || b.timestamp);
-    return da - db;
+    const da = new Date(a.date || a.datetime || a.timestamp || 0);
+    const db = new Date(b.date || b.datetime || b.timestamp || 0);
+    if (isNaN(da) || isNaN(db)) return 0;
+    return da - db; // تصاعدي: الأقدم أولاً
   });
+
+  // تحقق: آخر شمعة يجب أن تكون الأحدث
+  if (sorted.length < 10) return null;
 
   return {
     closes: sorted.map(c => +c.close),
