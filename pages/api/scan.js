@@ -110,27 +110,75 @@ export default async function handler(req, res) {
 // ── جلب OHLC ─────────────────────────────────────────────────────
 async function fetchOHLC(apiKey, symbol, interval) {
   const to   = new Date().toISOString().split("T")[0];
-  const days = interval === "1d" ? 400 : interval === "1w" ? 730 : 1825;
+  // نجلب دائماً بيانات يومية ثم نجمّعها يدوياً
+  const days = interval === "1m" ? 1825 : 730;
   const from = new Date(Date.now() - days*24*60*60*1000).toISOString().split("T")[0];
 
-  const url = `${BASE}/historical/${symbol}/?interval=${interval}&from=${from}&to=${to}`;
+  const url = `${BASE}/historical/${symbol}/?interval=1d&from=${from}&to=${to}`;
   const r   = await fetch(url, { headers: { "X-API-Key": apiKey } });
   if (!r.ok) return null;
 
   const json    = await r.json();
-  const candles = json.data || [];
-  if (candles.length < 10) return null;
+  const daily   = json.data || [];
+  if (daily.length < 10) return null;
 
-  const sorted = [...candles].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const sorted = [...daily].sort((a, b) => new Date(a.date) - new Date(b.date));
 
+  // تحقق: آخر شمعة لا تكون أقدم من 7 أيام
   const lastDate = new Date(sorted[sorted.length-1].date);
   if ((Date.now() - lastDate) / 86400000 > 7) return null;
 
+  // إذا يومي — أرجع مباشرة
+  if (interval === "1d") {
+    return {
+      closes: sorted.map(c => +c.close),
+      highs:  sorted.map(c => +c.high),
+      lows:   sorted.map(c => +c.low),
+    };
+  }
+
+  // أسبوعي أو شهري — نجمّع يدوياً
+  const aggregated = aggregateCandles(sorted, interval);
+  if (aggregated.length < 10) return null;
+
   return {
-    closes: sorted.map(c => +c.close),
-    highs:  sorted.map(c => +c.high),
-    lows:   sorted.map(c => +c.low),
+    closes: aggregated.map(c => c.close),
+    highs:  aggregated.map(c => c.high),
+    lows:   aggregated.map(c => c.low),
   };
+}
+
+// ── تجميع الشمعات يدوياً ──────────────────────────────────────────
+function aggregateCandles(daily, interval) {
+  const groups = {};
+
+  for (const c of daily) {
+    const d   = new Date(c.date);
+    let key;
+
+    if (interval === "1w") {
+      // مفتاح الأسبوع: السنة + رقم الأسبوع (الأحد = بداية الأسبوع)
+      const day = d.getDay(); // 0=Sun
+      const sunday = new Date(d);
+      sunday.setDate(d.getDate() - day);
+      key = sunday.toISOString().split("T")[0];
+    } else {
+      // شهري
+      key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    }
+
+    if (!groups[key]) {
+      groups[key] = { open: +c.open, high: +c.high, low: +c.low, close: +c.close, date: c.date };
+    } else {
+      groups[key].high  = Math.max(groups[key].high, +c.high);
+      groups[key].low   = Math.min(groups[key].low,  +c.low);
+      groups[key].close = +c.close; // آخر إغلاق
+    }
+  }
+
+  // نُبقي الأسبوع/الشهر الحالي (الشمعة الحية) — بإغلاق آخر يوم تداول
+  const keys = Object.keys(groups).sort();
+  return keys.map(k => groups[k]);
 }
 
 // ── Stochastic 5,3,3 ─────────────────────────────────────────────
