@@ -1,4 +1,4 @@
-// pages/api/scan.js — v3.2 — 300 candles, staleness check, crossedLastBar
+// pages/api/scan.js — v3.3 — strict crossedLastBar + kAbovePrev
 
 const BASE = "https://app.sahmk.sa/api/v1";
 
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
       const data = await fetchOHLC(sahmkKey, symbol, "1d", 10);
       return res.status(200).json({ symbol, raw: data });
     }
-    return res.status(200).json({ version: "3.2", filter: "1-8xxx-300candles-staleness" });
+    return res.status(200).json({ version: "3.3", filter: "crossedLastBar-strict-kAbovePrev" });
   }
 
   if (req.method !== "POST")
@@ -155,21 +155,27 @@ function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
   for (let i = dPeriod - 1; i < kArr.length; i++)
     dArr.push(kArr.slice(i - dPeriod + 1, i + 1).reduce((a, b) => a + b) / dPeriod);
 
-  // نحفظ آخر 3 قيم لضمان دقة تحديد التقاطع
   const k      = kArr[kArr.length - 1];
   const kPrev  = kArr[kArr.length - 2];
   const kPrev2 = kArr[kArr.length - 3];
+  const kPrev3 = kArr[kArr.length - 4];
   const d      = dArr[dArr.length - 1];
   const dPrev  = dArr[dArr.length - 2];
   const dPrev2 = dArr[dArr.length - 3];
+  const dPrev3 = dArr[dArr.length - 4];
 
-  // هل التقاطع حصل على الشمعة الأخيرة فعلاً؟
-  // يعبر الآن = الشمعة الأخيرة هي نقطة التقاطع
-  // فوق = K فوق D، لكن التقاطع حصل في شمعة سابقة
-  const crossedLastBar  = kPrev  !== undefined && dPrev  !== undefined && kPrev  < dPrev  && k > d;
-  const crossedPrevBar  = kPrev2 !== undefined && dPrev2 !== undefined && kPrev2 < dPrev2 && kPrev > dPrev;
+  // يعبر الآن = K كانت تحت D في الشمعتين السابقتين وعبرت في الأخيرة
+  // شرط صارم: K < D في شمعتين متتاليتين قبل التقاطع
+  const wasBelow2Bars = kPrev2 !== undefined && dPrev2 !== undefined && kPrev2 < dPrev2;
+  const wasBelow1Bar  = kPrev  !== undefined && dPrev  !== undefined && kPrev  < dPrev;
+  const crossedLastBar = wasBelow1Bar && k > d;
 
-  return { k, kPrev, kPrev2, d, dPrev, dPrev2, crossedLastBar };
+  // فوق = K فوق D الآن، والشمعة السابقة كانت أيضاً K فوق D
+  // يعني التقاطع حصل قبل الشمعة الأخيرة
+  const kAboveNow  = k > d;
+  const kAbovePrev = kPrev !== undefined && dPrev !== undefined && kPrev > dPrev;
+
+  return { k, kPrev, d, dPrev, crossedLastBar, kAboveNow, kAbovePrev };
 }
 
 // ── DMA 10,50,10 ─────────────────────────────────────────────────
@@ -215,14 +221,16 @@ function evalSignal(stochResults, dmaResults, cfg) {
   ].filter(t => t.active && t.data);
 
   const stochOk = stochTFs.length === 0 || stochTFs.every(t => {
-    const { k, d, kPrev, dPrev, crossedLastBar } = t.data;
+    const { k, d, kPrev, dPrev, crossedLastBar, kAboveNow, kAbovePrev } = t.data;
     let ok;
     if (t.mode === "يعبر الآن") {
-      // التقاطع يجب أن يكون على الشمعة الأخيرة تحديداً
+      // يعبر الآن: K عبرت D في الشمعة الأخيرة فقط
+      // وكانت تحت D في الشمعة السابقة
       ok = crossedLastBar === true;
     } else {
-      // فوق = K فوق D بغض النظر متى حصل التقاطع
-      ok = k > d && !crossedLastBar;
+      // فوق: K فوق D الآن، وكانت فوق D في الشمعة السابقة أيضاً
+      // يعني التقاطع حصل قبل الشمعة الأخيرة
+      ok = kAboveNow && kAbovePrev;
     }
     if (cfg.stochOS  && ok) ok = kPrev < cfg.stochOSLevel;
     if (cfg.stochMid && ok) ok = k > 50;
