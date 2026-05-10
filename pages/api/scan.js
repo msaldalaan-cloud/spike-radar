@@ -15,6 +15,8 @@ export default async function handler(req, res) {
   if (!sahmkKey)
     return res.status(500).json({ error: "SAHMK_API_KEY غير موجود" });
 
+  const startTime = Date.now();
+
   try {
     // ── 1. جلب قائمة أسهم TASI فقط ──────────────────────────
     const listRes = await fetch(`${BASE}/companies/?market=TASI&limit=500`, {
@@ -34,6 +36,8 @@ export default async function handler(req, res) {
       return res.status(200).json({ results: [], scannedAt: new Date().toISOString() });
 
     const results = [];
+    // معالجة دفعات لتجنب الـ timeout — 50 سهم في كل دفعة
+    const BATCH = 50;
 
     for (const stock of stocks) {
       const symbol = stock.symbol;
@@ -98,6 +102,9 @@ export default async function handler(req, res) {
           difma: evaluation.difma!= null ? +evaluation.difma.toFixed(4): null,
         });
       } catch { continue; }
+
+      // إذا اقتربنا من الـ timeout (250 ثانية) نوقف ونرجع ما عندنا
+      if (Date.now() - startTime > 250000) break;
     }
 
     return res.status(200).json({ results, scannedAt: new Date().toISOString() });
@@ -207,13 +214,14 @@ function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
     D.push(sum / dPeriod);
   }
 
-  // D أطول من K بـ (dPeriod-1) — نأخذ D المقابلة لآخر K
-  // %K = K (الأسرع) , %D = D (الأبطأ = SMA of K)
-  const n      = K.length - 1;
-  const k      = K[n];                    // آخر %K
-  const kPrev  = K[n-1];
-  const d      = D[n - (dPeriod-1)];     // %D المقابلة لآخر %K
-  const dPrev  = D[n - (dPeriod-1) - 1];
+  // %K = آخر عنصر في K (الأسرع)
+  // %D = آخر عنصر في D (الأبطأ) — D أقصر من K بـ (dPeriod-1)
+  // لمطابقة نفس الشمعة: آخر D[m] يقابل K[m + dPeriod-1]
+  const m      = D.length - 1;           // آخر فهرس في D
+  const k      = K[m + (dPeriod-1)];    // %K المقابلة لآخر %D
+  const kPrev  = K[m + (dPeriod-1) -1];
+  const d      = D[m];                   // آخر %D
+  const dPrev  = D[m-1];
 
   const crossedLastBar = kPrev < dPrev && k > d;
   const kAbovePrev     = kPrev > dPrev;
