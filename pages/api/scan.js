@@ -29,9 +29,11 @@ export default async function handler(req, res) {
 
     const results = [];
 
-    for (const stock of stocks) {
+    // فلترة الأسهم الصحيحة فقط — 4 أرقام (TASI)
+    const validStocks = stocks.filter(s => s.symbol && /^\d{4}$/.test(s.symbol));
+
+    for (const stock of validStocks) {
       const symbol = stock.symbol;
-      if (!symbol) continue;
 
       try {
         // ── 2. جلب OHLC لكل فاصل مفعّل ────────────────────
@@ -100,11 +102,15 @@ async function fetchOHLC(apiKey, symbol, interval, limit = 120) {
 
   const json    = await r.json();
   // Sahmk يرجع: { results: [{date, open, high, low, close, volume}] }
-  const candles = json.results || json.data || [];
+  const candles = json.results || json.data || json.candles || [];
   if (candles.length < 10) return null;
 
-  // الأقدم أولاً
-  const sorted = [...candles].sort((a, b) => new Date(a.date) - new Date(b.date));
+  // الأقدم أولاً — Sahmk يرجع الأحدث أولاً دائماً
+  const sorted = [...candles].sort((a, b) => {
+    const da = new Date(a.date || a.datetime || a.timestamp);
+    const db = new Date(b.date || b.datetime || b.timestamp);
+    return da - db;
+  });
 
   return {
     closes: sorted.map(c => +c.close),
@@ -127,12 +133,22 @@ function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
   const dArr = [];
   for (let i = dPeriod - 1; i < kArr.length; i++)
     dArr.push(kArr.slice(i - dPeriod + 1, i + 1).reduce((a, b) => a + b) / dPeriod);
-  return {
-    k:     kArr[kArr.length - 1],
-    kPrev: kArr[kArr.length - 2],
-    d:     dArr[dArr.length - 1],
-    dPrev: dArr[dArr.length - 2],
-  };
+
+  // نحفظ آخر 3 قيم لضمان دقة تحديد التقاطع
+  const k      = kArr[kArr.length - 1];
+  const kPrev  = kArr[kArr.length - 2];
+  const kPrev2 = kArr[kArr.length - 3];
+  const d      = dArr[dArr.length - 1];
+  const dPrev  = dArr[dArr.length - 2];
+  const dPrev2 = dArr[dArr.length - 3];
+
+  // هل التقاطع حصل على الشمعة الأخيرة فعلاً؟
+  // يعبر الآن = الشمعة الأخيرة هي نقطة التقاطع
+  // فوق = K فوق D، لكن التقاطع حصل في شمعة سابقة
+  const crossedLastBar  = kPrev  !== undefined && dPrev  !== undefined && kPrev  < dPrev  && k > d;
+  const crossedPrevBar  = kPrev2 !== undefined && dPrev2 !== undefined && kPrev2 < dPrev2 && kPrev > dPrev;
+
+  return { k, kPrev, kPrev2, d, dPrev, dPrev2, crossedLastBar };
 }
 
 // ── DMA 10,50,10 ─────────────────────────────────────────────────
@@ -146,12 +162,14 @@ function calcDMA(closes, fast, slow, signal) {
   }
   const difma     = ema(difArr, signal);
   const difmaPrev = ema(difArr.slice(0, -1), signal);
-  return {
-    dif:      difArr[difArr.length - 1],
-    difPrev:  difArr[difArr.length - 2],
-    difma,
-    difmaPrev,
-  };
+  const dif       = difArr[difArr.length - 1];
+  const difPrev   = difArr[difArr.length - 2];
+
+  // هل التقاطع حصل على الشمعة الأخيرة؟
+  const crossedLastBar = difPrev !== undefined && difmaPrev !== null &&
+    difPrev < difmaPrev && dif > difma;
+
+  return { dif, difPrev, difma, difmaPrev, crossedLastBar };
 }
 
 function ema(arr, period) {
@@ -176,10 +194,15 @@ function evalSignal(stochResults, dmaResults, cfg) {
   ].filter(t => t.active && t.data);
 
   const stochOk = stochTFs.length === 0 || stochTFs.every(t => {
-    const { k, d, kPrev, dPrev } = t.data;
-    let ok = t.mode === "يعبر الآن"
-      ? crosses(k, d, kPrev, dPrev)
-      : above(k, d, kPrev, dPrev);
+    const { k, d, kPrev, dPrev, crossedLastBar } = t.data;
+    let ok;
+    if (t.mode === "يعبر الآن") {
+      // التقاطع يجب أن يكون على الشمعة الأخيرة تحديداً
+      ok = crossedLastBar === true;
+    } else {
+      // فوق = K فوق D بغض النظر متى حصل التقاطع
+      ok = k > d && !crossedLastBar;
+    }
     if (cfg.stochOS  && ok) ok = kPrev < cfg.stochOSLevel;
     if (cfg.stochMid && ok) ok = k > 50;
     return ok;
@@ -192,10 +215,13 @@ function evalSignal(stochResults, dmaResults, cfg) {
   ].filter(t => t.active && t.data);
 
   const dmaOk = dmaTFs.length === 0 || dmaTFs.every(t => {
-    const { dif, difma, difPrev, difmaPrev } = t.data;
-    let ok = t.mode === "يعبر الآن"
-      ? crosses(dif, difma, difPrev, difmaPrev)
-      : above(dif, difma, difPrev, difmaPrev);
+    const { dif, difma, crossedLastBar } = t.data;
+    let ok;
+    if (t.mode === "يعبر الآن") {
+      ok = crossedLastBar === true;
+    } else {
+      ok = dif > difma && !crossedLastBar;
+    }
     if (cfg.dmaZero && ok) ok = dif > 0;
     return ok;
   });
