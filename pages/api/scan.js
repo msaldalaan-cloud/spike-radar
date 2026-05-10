@@ -1,4 +1,4 @@
-// pages/api/scan.js — v3.3 — strict crossedLastBar + kAbovePrev
+// pages/api/scan.js — v3.4 — json.data fix, 20-candle aware
 
 const BASE = "https://app.sahmk.sa/api/v1";
 
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
       const data = await fetchOHLC(sahmkKey, symbol, "1d", 10);
       return res.status(200).json({ symbol, raw: data });
     }
-    return res.status(200).json({ version: "3.3", filter: "crossedLastBar-strict-kAbovePrev" });
+    return res.status(200).json({ version: "3.4", filter: "data-field-fix-kAbovePrev" });
   }
 
   if (req.method !== "POST")
@@ -115,8 +115,8 @@ async function fetchOHLC(apiKey, symbol, interval, limit = 120) {
   if (!r.ok) return null;
 
   const json    = await r.json();
-  const candles = json.results || json.data || json.candles || [];
-  if (candles.length < 10) return null;
+  const candles = json.data || json.results || json.candles || [];
+  if (candles.length < 5) return null;
 
   // الأقدم أولاً
   const sorted = [...candles].sort((a, b) => {
@@ -179,6 +179,8 @@ function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
 }
 
 // ── DMA 10,50,10 ─────────────────────────────────────────────────
+// ملاحظة: يحتاج 60+ شمعة. مع 20 شمعة يومية لن يعمل.
+// للـ weekly/monthly قد يكون كافياً.
 function calcDMA(closes, fast, slow, signal) {
   if (closes.length < slow + signal) return null;
   const difArr = [];
