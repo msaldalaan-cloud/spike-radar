@@ -1,8 +1,12 @@
-// pages/api/scan.js
+// pages/api/scan.js — v3.0 — TASI only, valid symbols, crossedLastBar fix
 
 const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
+  // GET للتحقق من الإصدار
+  if (req.method === "GET")
+    return res.status(200).json({ version: "3.0", filter: "TASI-4digit-crossedLastBar" });
+
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
