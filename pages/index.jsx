@@ -1,9 +1,16 @@
 import { useState, useEffect } from "react";
 
 const DEFAULT_CFG = {
-  stochTF: "daily", dmaTF: "daily",
-  stochMode: "يعبر الآن", stochOS: false, stochOSLevel: 20, stochMid: false,
-  dmaMode: "يعبر الآن", dmaZero: false, dmaSMA50: false,
+  // Stochastic — كل فاصل مستقل
+  stochDaily:  false, stochDailyMode:   "يعبر الآن",
+  stochWeekly: false, stochWeeklyMode:  "يعبر الآن",
+  stochMonthly:false, stochMonthlyMode: "يعبر الآن",
+  stochOS: false, stochOSLevel: 20, stochMid: false,
+  // DMA — كل فاصل مستقل
+  dmaDaily:    false, dmaDailyMode:     "يعبر الآن",
+  dmaWeekly:   false, dmaWeeklyMode:    "يعبر الآن",
+  dmaMonthly:  false, dmaMonthlyMode:   "يعبر الآن",
+  dmaZero: false, dmaSMA50: false,
 };
 
 export default function Scanner() {
@@ -122,58 +129,88 @@ export default function Scanner() {
           {/* Stochastic */}
           <div className="card">
             <div className="sec-title">📊 STOCHASTIC 5,3,3</div>
-            <div className="label">الفاصل الزمني</div>
-            <div className="trow" style={{ marginBottom:12 }}>
-              {[["daily","يومي"],["weekly","أسبوعي"],["monthly","شهري"]].map(([v,l]) => (
-                <button key={v} className={`tog ${cfg.stochTF===v?"on":""}`} onClick={() => set("stochTF",v)}>{l}</button>
-              ))}
-            </div>
-            <div className="label">الشرط</div>
-            <div className="trow" style={{ marginBottom:12 }}>
-              {["يعبر الآن","فوق (من أي وقت)"].map(m => (
-                <button key={m} className={`tog ${cfg.stochMode===m?"on":""}`} onClick={() => set("stochMode",m)}>{m}</button>
-              ))}
-            </div>
-            <label className="cb">
-              <input type="checkbox" checked={cfg.stochOS} onChange={e => set("stochOS",e.target.checked)} />
-              <span>تقاطع من منطقة Oversold</span>
-            </label>
-            {cfg.stochOS && (
-              <div style={{ paddingRight:22, marginBottom:8 }}>
-                <div className="label">K كان أقل من</div>
-                <input type="number" value={cfg.stochOSLevel} min={1} max={49}
-                  onChange={e => set("stochOSLevel",+e.target.value)} style={{ width:80 }} />
+            {[
+              ["daily",  "stochDaily",  "stochDailyMode",   "يومي"],
+              ["weekly", "stochWeekly", "stochWeeklyMode",  "أسبوعي"],
+              ["monthly","stochMonthly","stochMonthlyMode", "شهري"],
+            ].map(([,activeKey, modeKey, label]) => (
+              <div key={activeKey} style={{ marginBottom:10, padding:"10px 12px", borderRadius:6,
+                background: cfg[activeKey] ? "rgba(14,165,233,0.08)" : "rgba(255,255,255,0.02)",
+                border: `1px solid ${cfg[activeKey] ? "rgba(14,165,233,0.3)" : "#1e3a5f"}`,
+                transition:"all .2s" }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: cfg[activeKey] ? 10 : 0 }}>
+                  <label className="cb" style={{ margin:0 }}>
+                    <input type="checkbox" checked={cfg[activeKey]} onChange={e => set(activeKey, e.target.checked)} />
+                    <span style={{ color: cfg[activeKey] ? "#e2e8f0" : "#64748b", fontWeight: cfg[activeKey] ? 600 : 400 }}>{label}</span>
+                  </label>
+                  {cfg[activeKey] && (
+                    <div className="trow" style={{ width:"auto" }}>
+                      {["يعبر الآن","فوق"].map(m => (
+                        <button key={m} className={`tog ${cfg[modeKey]===m?"on":""}`}
+                          onClick={() => set(modeKey, m)} style={{ padding:"4px 10px", fontSize:9 }}>{m}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-            <label className="cb">
-              <input type="checkbox" checked={cfg.stochMid} onChange={e => set("stochMid",e.target.checked)} />
-              <span>K فوق مستوى 50</span>
-            </label>
+            ))}
+            <div style={{ borderTop:"1px solid #1e3a5f", paddingTop:10, marginTop:4 }}>
+              <label className="cb">
+                <input type="checkbox" checked={cfg.stochOS} onChange={e => set("stochOS",e.target.checked)} />
+                <span>تقاطع من منطقة Oversold</span>
+              </label>
+              {cfg.stochOS && (
+                <div style={{ paddingRight:22, marginBottom:8 }}>
+                  <div className="label">K كان أقل من</div>
+                  <input type="number" value={cfg.stochOSLevel} min={1} max={49}
+                    onChange={e => set("stochOSLevel",+e.target.value)} style={{ width:80 }} />
+                </div>
+              )}
+              <label className="cb">
+                <input type="checkbox" checked={cfg.stochMid} onChange={e => set("stochMid",e.target.checked)} />
+                <span>K فوق مستوى 50</span>
+              </label>
+            </div>
           </div>
 
           {/* DMA */}
           <div className="card">
             <div className="sec-title">📈 DMA 10,50,10</div>
-            <div className="label">الفاصل الزمني</div>
-            <div className="trow" style={{ marginBottom:12 }}>
-              {[["daily","يومي"],["weekly","أسبوعي"],["monthly","شهري"]].map(([v,l]) => (
-                <button key={v} className={`tog ${cfg.dmaTF===v?"on":""}`} onClick={() => set("dmaTF",v)}>{l}</button>
-              ))}
+            {[
+              ["daily",  "dmaDaily",   "dmaDailyMode",   "يومي"],
+              ["weekly", "dmaWeekly",  "dmaWeeklyMode",  "أسبوعي"],
+              ["monthly","dmaMonthly", "dmaMonthlyMode", "شهري"],
+            ].map(([,activeKey, modeKey, label]) => (
+              <div key={activeKey} style={{ marginBottom:10, padding:"10px 12px", borderRadius:6,
+                background: cfg[activeKey] ? "rgba(14,165,233,0.08)" : "rgba(255,255,255,0.02)",
+                border: `1px solid ${cfg[activeKey] ? "rgba(14,165,233,0.3)" : "#1e3a5f"}`,
+                transition:"all .2s" }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: cfg[activeKey] ? 10 : 0 }}>
+                  <label className="cb" style={{ margin:0 }}>
+                    <input type="checkbox" checked={cfg[activeKey]} onChange={e => set(activeKey, e.target.checked)} />
+                    <span style={{ color: cfg[activeKey] ? "#e2e8f0" : "#64748b", fontWeight: cfg[activeKey] ? 600 : 400 }}>{label}</span>
+                  </label>
+                  {cfg[activeKey] && (
+                    <div className="trow" style={{ width:"auto" }}>
+                      {["يعبر الآن","فوق"].map(m => (
+                        <button key={m} className={`tog ${cfg[modeKey]===m?"on":""}`}
+                          onClick={() => set(modeKey, m)} style={{ padding:"4px 10px", fontSize:9 }}>{m}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            <div style={{ borderTop:"1px solid #1e3a5f", paddingTop:10, marginTop:4 }}>
+              <label className="cb">
+                <input type="checkbox" checked={cfg.dmaZero} onChange={e => set("dmaZero",e.target.checked)} />
+                <span>DIF فوق الصفر</span>
+              </label>
+              <label className="cb">
+                <input type="checkbox" checked={cfg.dmaSMA50} onChange={e => set("dmaSMA50",e.target.checked)} />
+                <span>السعر فوق SMA 50</span>
+              </label>
             </div>
-            <div className="label">الشرط</div>
-            <div className="trow" style={{ marginBottom:12 }}>
-              {["يعبر الآن","فوق (من أي وقت)"].map(m => (
-                <button key={m} className={`tog ${cfg.dmaMode===m?"on":""}`} onClick={() => set("dmaMode",m)}>{m}</button>
-              ))}
-            </div>
-            <label className="cb">
-              <input type="checkbox" checked={cfg.dmaZero} onChange={e => set("dmaZero",e.target.checked)} />
-              <span>DIF فوق الصفر</span>
-            </label>
-            <label className="cb">
-              <input type="checkbox" checked={cfg.dmaSMA50} onChange={e => set("dmaSMA50",e.target.checked)} />
-              <span>السعر فوق SMA 50</span>
-            </label>
           </div>
 
           {/* الاستراتيجيات */}
