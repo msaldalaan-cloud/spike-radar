@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "5.2", status: "ok" });
+    return res.status(200).json({ version: "5.3", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -222,13 +222,12 @@ function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
   const m      = D.length - 1;
   // %D = آخر D (الأبطأ)
   // %K المقابلة = K[m + dPeriod-1] = K[K.length-1]
-  // K[K.length-1] = آخر %K (الأسرع) لكن يحتاج مزامنة مع D
-  // D[D.length-1] = آخر %D (الأبطأ)
-  // نعكس التعيين لمطابقة TradingView
-  const k     = D[m];               // %K = آخر D (الأسرع في السياق)
-  const kPrev = D[m-1];
-  const d     = K[m + (dPeriod-1)]; // %D = آخر K
-  const dPrev = K[m + (dPeriod-1) - 1];
+  // K = %K (الأسرع) , D = %D (الأبطأ = SMA of K)
+  // المنطق صحيح: k < d في الهبوط، k > d في الصعود
+  const k     = K[m + (dPeriod-1)];      // آخر %K
+  const kPrev = K[m + (dPeriod-1) - 1];
+  const d     = D[m];                    // آخر %D
+  const dPrev = D[m-1];
 
   const crossedLastBar = kPrev < dPrev && k > d;
   const kAbovePrev     = kPrev > dPrev;
