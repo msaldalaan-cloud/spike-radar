@@ -105,33 +105,38 @@ export default async function handler(req, res) {
 }
 
 // ── جلب OHLC من Sahmk ────────────────────────────────────────────
-async function fetchOHLC(apiKey, symbol, interval, limit = 120) {
-  // تحويل interval لصيغة Sahmk
-  const periodMap = { "1d": "daily", "1w": "weekly", "1M": "monthly" };
-  const period    = periodMap[interval] || "daily";
+async function fetchOHLC(apiKey, symbol, interval) {
+  const to  = new Date().toISOString().split("T")[0];
+  let url;
 
-  const url = `${BASE}/historical/${symbol}/?period=${period}&limit=300`;
-  const r   = await fetch(url, { headers: { "X-API-Key": apiKey } });
+  if (interval === "1d") {
+    const from = new Date(Date.now() - 400*24*60*60*1000).toISOString().split("T")[0];
+    url = `${BASE}/historical/${symbol}/?period=daily&from=${from}&to=${to}`;
+  } else if (interval === "1w") {
+    const from = new Date(Date.now() - 730*24*60*60*1000).toISOString().split("T")[0];
+    url = `${BASE}/historical/${symbol}/?interval=1w&from=${from}&to=${to}`;
+  } else {
+    const from = new Date(Date.now() - 1825*24*60*60*1000).toISOString().split("T")[0];
+    url = `${BASE}/historical/${symbol}/?interval=1m&from=${from}&to=${to}`;
+  }
+
+  const r = await fetch(url, { headers: { "X-API-Key": apiKey } });
   if (!r.ok) return null;
 
   const json    = await r.json();
   const candles = json.data || json.results || json.candles || [];
-  if (candles.length < 5) return null;
+  if (candles.length < 10) return null;
 
-  // الأقدم أولاً
-  const sorted = [...candles].sort((a, b) => {
-    const da = new Date(a.date || a.datetime || a.timestamp || 0);
-    const db = new Date(b.date || b.datetime || b.timestamp || 0);
-    if (isNaN(da) || isNaN(db)) return 0;
-    return da - db;
-  });
+  const sorted = [...candles].sort((a, b) =>
+    new Date(a.date || 0) - new Date(b.date || 0)
+  );
 
   if (sorted.length < 10) return null;
 
-  // تحقق: آخر شمعة لا تكون أقدم من 7 أيام (السوق مغلق عطل)
-  const lastDate = new Date(sorted[sorted.length - 1].date || 0);
-  const daysDiff = (Date.now() - lastDate) / (1000 * 60 * 60 * 24);
-  if (daysDiff > 7) return null; // بيانات قديمة جداً
+  // تحقق: آخر شمعة لا تكون أقدم من 7 أيام
+  const lastDate = new Date(sorted[sorted.length-1].date || 0);
+  const daysDiff = (Date.now() - lastDate) / (1000*60*60*24);
+  if (daysDiff > 7) return null;
 
   return {
     closes: sorted.map(c => +c.close),
