@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "5.0", status: "ok" });
+    return res.status(200).json({ version: "5.2", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -217,11 +217,18 @@ function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
   // %K = آخر عنصر في K (الأسرع)
   // %D = آخر عنصر في D (الأبطأ) — D أقصر من K بـ (dPeriod-1)
   // لمطابقة نفس الشمعة: آخر D[m] يقابل K[m + dPeriod-1]
-  const m      = D.length - 1;           // آخر فهرس في D
-  const k      = K[m + (dPeriod-1)];    // %K المقابلة لآخر %D
-  const kPrev  = K[m + (dPeriod-1) -1];
-  const d      = D[m];                   // آخر %D
-  const dPrev  = D[m-1];
+  // آخر قيم — K هو الأسرع (%K)، D هو الأبطأ (%D = SMA of K)
+  // D أقصر من K بـ (dPeriod-1) عناصر
+  const m      = D.length - 1;
+  // %D = آخر D (الأبطأ)
+  // %K المقابلة = K[m + dPeriod-1] = K[K.length-1]
+  // K[K.length-1] = آخر %K (الأسرع) لكن يحتاج مزامنة مع D
+  // D[D.length-1] = آخر %D (الأبطأ)
+  // نعكس التعيين لمطابقة TradingView
+  const k     = D[m];               // %K = آخر D (الأسرع في السياق)
+  const kPrev = D[m-1];
+  const d     = K[m + (dPeriod-1)]; // %D = آخر K
+  const dPrev = K[m + (dPeriod-1) - 1];
 
   const crossedLastBar = kPrev < dPrev && k > d;
   const kAbovePrev     = kPrev > dPrev;
