@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "5.3", status: "ok" });
+    return res.status(200).json({ version: "5.4", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -135,6 +135,26 @@ async function fetchOHLC(apiKey, symbol, interval) {
   const lastDate = new Date(sorted[sorted.length-1].date);
   if ((Date.now() - lastDate) / 86400000 > 7) return null;
 
+  // أضف شمعة اليوم إذا لم تكن موجودة (الأسبوع الحالي الحي)
+  const todayStr = new Date().toISOString().split("T")[0];
+  const lastStr  = sorted[sorted.length-1].date;
+  if (lastStr < todayStr && interval !== "1d") {
+    // جلب سعر اليوم من quote endpoint
+    try {
+      const qr   = await fetch(`${BASE}/quote/${symbol}/`, { headers: { "X-API-Key": apiKey } });
+      const qjson = await qr.json();
+      if (qjson.price) {
+        sorted.push({
+          date:  todayStr,
+          open:  qjson.open  || qjson.price,
+          high:  qjson.high  || qjson.price,
+          low:   qjson.low   || qjson.price,
+          close: qjson.price,
+        });
+      }
+    } catch {}
+  }
+
   // إذا يومي — أرجع مباشرة
   if (interval === "1d") {
     return {
@@ -164,8 +184,8 @@ function aggregateCandles(daily, interval) {
     let key;
 
     if (interval === "1w") {
-      // مفتاح الأسبوع: السنة + رقم الأسبوع (الأحد = بداية الأسبوع)
-      const day = d.getDay(); // 0=Sun
+      // مفتاح الأسبوع: يوم الأحد = بداية الأسبوع
+      const day    = d.getDay(); // 0=Sun
       const sunday = new Date(d);
       sunday.setDate(d.getDate() - day);
       key = sunday.toISOString().split("T")[0];
@@ -179,11 +199,11 @@ function aggregateCandles(daily, interval) {
     } else {
       groups[key].high  = Math.max(groups[key].high, +c.high);
       groups[key].low   = Math.min(groups[key].low,  +c.low);
-      groups[key].close = +c.close; // آخر إغلاق
+      groups[key].close = +c.close; // آخر إغلاق في الأسبوع/الشهر
     }
   }
 
-  // نُبقي الأسبوع/الشهر الحالي (الشمعة الحية) — بإغلاق آخر يوم تداول
+  // نُبقي كل الأسابيع بما فيها الحالي (الشمعة الحية بآخر سعر متاح)
   const keys = Object.keys(groups).sort();
   return keys.map(k => groups[k]);
 }
