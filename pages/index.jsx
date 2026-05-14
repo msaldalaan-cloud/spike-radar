@@ -291,7 +291,7 @@ export default function Scanner() {
               <div className="sec-title">✅ إشارات ({passed.length})</div>
               <div style={{ maxHeight:280, overflowY:"auto" }}>
                 {passed.map((r,i) => (
-                  <div key={i} className="rrow" style={{ background:"rgba(0,255,136,0.06)", border:"1px solid rgba(0,255,136,0.2)" }}>
+                  <div key={i} className="rrow" style={{ background:"rgba(0,255,136,0.06)", border:"1px solid rgba(0,255,136,0.2)", cursor:"pointer" }} onClick={() => window.open(`https://www.tradingview.com/chart/?symbol=TADAWUL:${r.symbol}`, "_blank")}>
                     <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                       <div style={{ width:8, height:8, borderRadius:"50%", background:"#00ff88", animation:"pulse 2s infinite" }} />
                       <div>
@@ -321,7 +321,7 @@ export default function Scanner() {
               <div className="sec-title" style={{ color:"#475569" }}>— لم تجتز ({failed.length})</div>
               <div style={{ maxHeight:200, overflowY:"auto" }}>
                 {failed.map((r,i) => (
-                  <div key={i} className="rrow" style={{ background:"transparent", border:"1px solid #1e3a5f", opacity:0.55 }}>
+                  <div key={i} className="rrow" style={{ background:"transparent", border:"1px solid #1e3a5f", opacity:0.55, cursor:"pointer" }} onClick={() => window.open(`https://www.tradingview.com/chart/?symbol=TADAWUL:${r.symbol}`, "_blank")}>
                     <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                       <div style={{ width:6, height:6, borderRadius:"50%", background:"#334155" }} />
                       <span style={{ fontSize:12, color:"#64748b", fontFamily:"mono" }}>{r.symbol}</span>
