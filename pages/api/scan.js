@@ -36,8 +36,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ results: [], scannedAt: new Date().toISOString() });
 
     const results = [];
-    const results = [];
-    const CONCURRENT = 8;
+        const CONCURRENT = 8;
 
     const processStock = async (stock) => {
       const symbol = stock.symbol;
