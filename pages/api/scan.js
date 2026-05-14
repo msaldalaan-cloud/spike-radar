@@ -141,13 +141,14 @@ async function fetchOHLC(apiKey, symbol, interval) {
   const lastDate = new Date(sorted[sorted.length-1].date);
   if ((Date.now() - lastDate) / 86400000 > 7) return null;
 
-  // أضف شمعة اليوم إذا لم تكن موجودة (الأسبوع الحالي الحي)
-  const todayStr = new Date().toISOString().split("T")[0];
-  const lastStr  = sorted[sorted.length-1].date;
+  // هل آخر شمعة هي اليوم؟
+  const todayStr    = new Date().toISOString().split("T")[0];
+  const lastStr     = sorted[sorted.length-1].date;
+
+  // أضف شمعة اليوم إذا لم تكن موجودة (للأسبوعي والشهري)
   if (lastStr < todayStr && interval !== "1d") {
-    // جلب سعر اليوم من quote endpoint
     try {
-      const qr   = await fetch(`${BASE}/quote/${symbol}/`, { headers: { "X-API-Key": apiKey } });
+      const qr    = await fetch(`${BASE}/quote/${symbol}/`, { headers: { "X-API-Key": apiKey } });
       const qjson = await qr.json();
       if (qjson.price) {
         sorted.push({
@@ -161,9 +162,7 @@ async function fetchOHLC(apiKey, symbol, interval) {
     } catch {}
   }
 
-  // هل آخر شمعة هي اليوم؟
   const lastDateStr = sorted[sorted.length-1].date;
-  const todayStr    = new Date().toISOString().split("T")[0];
   const isToday     = lastDateStr >= todayStr;
 
   // إذا يومي — أرجع مباشرة
