@@ -316,11 +316,11 @@ function evalSignal(stochResults, dmaResults, cfg, closes) {
     const { k, d, kPrev, dPrev, crossedLastBar, kAbovePrev } = t.data;
     // crossedLastBar: kPrev < dPrev AND k > d (تقاطع على آخر شمعة)
     // kAbovePrev: kPrev > dPrev (K كانت فوق D في الشمعة السابقة أيضاً)
-    // يعبر الآن: التقاطع على آخر شمعة AND آخر شمعة هي اليوم
+    // يعبر الآن: تقاطع على آخر شمعة + آخر شمعة اليوم
     const stochCrossed = kPrev < dPrev && k > d && (t.data.isToday !== false);
     let ok = t.mode === "يعبر الآن"
       ? stochCrossed
-      : (k > d && kPrev > dPrev);  // K فوق D الآن وكانت فوقها سابقاً
+      : (k > d); // فوق = K فوق D بغض النظر عن السابق
     if (t.osKey && ok) ok = kPrev < (t.osLvl ?? 20);
     if (t.sma50 && ok) ok = aboveSMA50;
     return ok;
@@ -340,11 +340,11 @@ function evalSignal(stochResults, dmaResults, cfg, closes) {
 
   const dmaOk = dmaTFs.length === 0 || dmaTFs.every(t => {
     const { dif, difma, difPrev, difmaPrev, crossedLastBar, difAbovePrev } = t.data;
-    // يعبر الآن: التقاطع على آخر شمعة AND آخر شمعة هي اليوم
+    // يعبر الآن: تقاطع على آخر شمعة + آخر شمعة اليوم
     const dmaCrossed = difPrev < difmaPrev && dif > difma && (t.data.isToday !== false);
     let ok = t.mode === "يعبر الآن"
       ? dmaCrossed
-      : (dif > difma && difPrev > difmaPrev);
+      : (dif > difma); // فوق = DIF فوق DIFMA بغض النظر عن السابق
     if (t.zero  && ok) ok = dif > 0;
     if (t.sma50 && ok) ok = aboveSMA50;
     return ok;
