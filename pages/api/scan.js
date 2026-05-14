@@ -73,7 +73,7 @@ export default async function handler(req, res) {
         ]) {
           if (!cfg[cfgKey]) continue;
           const data = ohlcCache[interval];
-          if (data) stochResults[key] = calcStoch(data.closes, data.highs, data.lows, 5, 3, 3);
+          if (data) stochResults[key] = { ...calcStoch(data.closes, data.highs, data.lows, 5, 3, 3), isToday: data.isToday };
         }
 
         // حساب DMA (من نفس الـ cache)
@@ -84,7 +84,7 @@ export default async function handler(req, res) {
         ]) {
           if (!cfg[cfgKey]) continue;
           const data = ohlcCache[interval];
-          if (data) dmaResults[key] = calcDMA(data.closes, 10, 50, 10);
+          if (data) { const r = calcDMA(data.closes, 10, 50, 10); if (r) dmaResults[key] = { ...r, isToday: data.isToday }; }
         }
 
         // SMA50 من الـ cache
@@ -161,12 +161,18 @@ async function fetchOHLC(apiKey, symbol, interval) {
     } catch {}
   }
 
+  // هل آخر شمعة هي اليوم؟
+  const lastDateStr = sorted[sorted.length-1].date;
+  const todayStr    = new Date().toISOString().split("T")[0];
+  const isToday     = lastDateStr >= todayStr;
+
   // إذا يومي — أرجع مباشرة
   if (interval === "1d") {
     return {
-      closes: sorted.map(c => +c.close),
-      highs:  sorted.map(c => +c.high),
-      lows:   sorted.map(c => +c.low),
+      closes:  sorted.map(c => +c.close),
+      highs:   sorted.map(c => +c.high),
+      lows:    sorted.map(c => +c.low),
+      isToday,
     };
   }
 
@@ -175,9 +181,10 @@ async function fetchOHLC(apiKey, symbol, interval) {
   if (aggregated.length < 10) return null;
 
   return {
-    closes: aggregated.map(c => c.close),
-    highs:  aggregated.map(c => c.high),
-    lows:   aggregated.map(c => c.low),
+    closes:  aggregated.map(c => c.close),
+    highs:   aggregated.map(c => c.high),
+    lows:    aggregated.map(c => c.low),
+    isToday,
   };
 }
 
@@ -310,8 +317,10 @@ function evalSignal(stochResults, dmaResults, cfg, closes) {
     const { k, d, kPrev, dPrev, crossedLastBar, kAbovePrev } = t.data;
     // crossedLastBar: kPrev < dPrev AND k > d (تقاطع على آخر شمعة)
     // kAbovePrev: kPrev > dPrev (K كانت فوق D في الشمعة السابقة أيضاً)
+    // يعبر الآن: التقاطع على آخر شمعة AND آخر شمعة هي اليوم
+    const stochCrossed = kPrev < dPrev && k > d && (t.data.isToday !== false);
     let ok = t.mode === "يعبر الآن"
-      ? (kPrev < dPrev && k > d)   // تقاطع صاعد على آخر شمعة
+      ? stochCrossed
       : (k > d && kPrev > dPrev);  // K فوق D الآن وكانت فوقها سابقاً
     if (t.osKey && ok) ok = kPrev < (t.osLvl ?? 20);
     if (t.sma50 && ok) ok = aboveSMA50;
@@ -332,8 +341,10 @@ function evalSignal(stochResults, dmaResults, cfg, closes) {
 
   const dmaOk = dmaTFs.length === 0 || dmaTFs.every(t => {
     const { dif, difma, difPrev, difmaPrev, crossedLastBar, difAbovePrev } = t.data;
+    // يعبر الآن: التقاطع على آخر شمعة AND آخر شمعة هي اليوم
+    const dmaCrossed = difPrev < difmaPrev && dif > difma && (t.data.isToday !== false);
     let ok = t.mode === "يعبر الآن"
-      ? (difPrev < difmaPrev && dif > difma)
+      ? dmaCrossed
       : (dif > difma && difPrev > difmaPrev);
     if (t.zero  && ok) ok = dif > 0;
     if (t.sma50 && ok) ok = aboveSMA50;
