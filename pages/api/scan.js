@@ -36,10 +36,10 @@ export default async function handler(req, res) {
       return res.status(200).json({ results: [], scannedAt: new Date().toISOString() });
 
     const results = [];
-    // معالجة دفعات لتجنب الـ timeout — 50 سهم في كل دفعة
-    const BATCH = 50;
+    const results = [];
+    const CONCURRENT = 8;
 
-    for (const stock of stocks) {
+    const processStock = async (stock) => {
       const symbol = stock.symbol;
       try {
         const stochResults = {}, dmaResults = {};
@@ -63,8 +63,8 @@ export default async function handler(req, res) {
              cfg.dmaDailySMA50,cfg.dmaWeeklySMA50,cfg.dmaMonthlySMA50].some(Boolean))
           neededIntervals.add("1d");
 
-        // جلب الفواصل بشكل متسلسل لتجنب الـ timeout
-        for (const iv of neededIntervals) await getOHLC(iv);
+        // جلب الفواصل بشكل متوازي لتسريع الفحص
+        await Promise.all([...neededIntervals].map(iv => getOHLC(iv)));
 
         // حساب Stoch
         for (const [key, cfgKey, interval] of [
@@ -92,7 +92,7 @@ export default async function handler(req, res) {
         const dailyCloses = ohlcCache["1d"]?.closes || null;
         const evaluation = evalSignal(stochResults, dmaResults, cfg, dailyCloses);
 
-        results.push({
+        return {
           symbol,
           name:  stock.name_ar || stock.name_en || symbol,
           pass:  evaluation.pass,
@@ -100,11 +100,18 @@ export default async function handler(req, res) {
           d:     evaluation.d    != null ? +evaluation.d.toFixed(2)    : null,
           dif:   evaluation.dif  != null ? +evaluation.dif.toFixed(4)  : null,
           difma: evaluation.difma!= null ? +evaluation.difma.toFixed(4): null,
-        });
-      } catch { continue; }
+        };
+      } catch { return null; }
+    };
 
-      // إذا اقتربنا من الـ timeout (250 ثانية) نوقف ونرجع ما عندنا
-      if (Date.now() - startTime > 250000) break;
+    // تشغيل دفعات متوازية — 8 أسهم في كل دفعة
+    for (let i = 0; i < stocks.length; i += CONCURRENT) {
+      if (Date.now() - startTime > 280000) break;
+      const batch   = stocks.slice(i, i + CONCURRENT);
+      const settled = await Promise.allSettled(batch.map(s => processStock(s)));
+      for (const r of settled) {
+        if (r.status === "fulfilled" && r.value) results.push(r.value);
+      }
     }
 
     return res.status(200).json({ results, scannedAt: new Date().toISOString() });
