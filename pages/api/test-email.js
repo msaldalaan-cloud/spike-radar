@@ -1,15 +1,14 @@
-// pages/api/test-email.js -- مؤقت لاختبار EmailJS
-
 export default async function handler(req, res) {
-  const ejsSvc   = process.env.EMAILJS_SERVICE_ID;
-  const ejsTpl   = process.env.EMAILJS_TEMPLATE_ID;
-  const ejsPub   = process.env.EMAILJS_PUBLIC_KEY;
-  const ejsEmail = process.env.EMAILJS_TO_EMAIL;
+  const ejsSvc     = process.env.EMAILJS_SERVICE_ID;
+  const ejsTpl     = process.env.EMAILJS_TEMPLATE_ID;
+  const ejsPub     = process.env.EMAILJS_PUBLIC_KEY;
+  const ejsPrivate = process.env.EMAILJS_PRIVATE_KEY;
+  const ejsEmail   = process.env.EMAILJS_TO_EMAIL;
 
-  if (!ejsSvc || !ejsTpl || !ejsPub || !ejsEmail) {
+  if (!ejsSvc || !ejsTpl || !ejsPub || !ejsPrivate) {
     return res.status(500).json({ 
-      error: "متغيرات EmailJS غير موجودة",
-      found: { ejsSvc: !!ejsSvc, ejsTpl: !!ejsTpl, ejsPub: !!ejsPub, ejsEmail: !!ejsEmail }
+      error: "متغيرات EmailJS غير مكتملة",
+      found: { ejsSvc:!!ejsSvc, ejsTpl:!!ejsTpl, ejsPub:!!ejsPub, ejsPrivate:!!ejsPrivate }
     });
   }
 
@@ -21,6 +20,7 @@ export default async function handler(req, res) {
         service_id:  ejsSvc,
         template_id: ejsTpl,
         user_id:     ejsPub,
+        accessToken: ejsPrivate,
         template_params: {
           to_email: ejsEmail,
           subject:  "SPIKE RADAR -- اختبار الإيميل",
@@ -29,14 +29,8 @@ export default async function handler(req, res) {
         },
       }),
     });
-
     const text = await r.text();
-    return res.status(200).json({ 
-      status: r.status, 
-      response: text,
-      ok: r.ok,
-      to: ejsEmail
-    });
+    return res.status(200).json({ status: r.status, response: text, ok: r.ok });
   } catch(e) {
     return res.status(500).json({ error: e.message });
   }
