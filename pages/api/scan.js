@@ -103,8 +103,7 @@ export default async function handler(req, res) {
           d:     evaluation.d    != null ? +evaluation.d.toFixed(2)    : null,
           dif:   evaluation.dif  != null ? +evaluation.dif.toFixed(4)  : null,
           difma: evaluation.difma!= null ? +evaluation.difma.toFixed(4): null,
-          _d:    evaluation._isToday_daily,
-          _w:    evaluation._isToday_weekly,
+          _d:    evaluation._isToday_daily === undefined ? "undef" : evaluation._isToday_daily,
         };
       } catch { return null; }
     };
