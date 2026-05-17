@@ -5,12 +5,7 @@ export default async function handler(req, res) {
   const ejsPrivate = process.env.EMAILJS_PRIVATE_KEY;
   const ejsEmail   = process.env.EMAILJS_TO_EMAIL;
 
-  if (!ejsSvc || !ejsTpl || !ejsPub || !ejsPrivate) {
-    return res.status(500).json({ 
-      error: "متغيرات EmailJS غير مكتملة",
-      found: { ejsSvc:!!ejsSvc, ejsTpl:!!ejsTpl, ejsPub:!!ejsPub, ejsPrivate:!!ejsPrivate }
-    });
-  }
+  const now = new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Riyadh"}));
 
   try {
     const r = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
@@ -22,10 +17,15 @@ export default async function handler(req, res) {
         user_id:     ejsPub,
         accessToken: ejsPrivate,
         template_params: {
-          to_email: ejsEmail,
-          subject:  "SPIKE RADAR -- اختبار الإيميل",
-          message:  "هذا إيميل اختبار من SPIKE RADAR\n\n• 2287 -- K:57.5 / D:57.3 | DIF:0.081",
-          time:     new Date().toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" }),
+          to_email:      ejsEmail,
+          title:         "SPIKE RADAR -- اختبار",
+          name:          "SPIKE RADAR",
+          time:          now.toLocaleString("ar-SA",{timeZone:"Asia/Riyadh"}),
+          strategy_name: "استراتيجية الاختبار",
+          scan_date:     now.toLocaleDateString("ar-SA",{timeZone:"Asia/Riyadh"}),
+          scan_time:     now.toLocaleTimeString("ar-SA",{timeZone:"Asia/Riyadh"}),
+          total_signals: "2",
+          stocks_list:   "2287 K:57.5/D:57.3 DIF:0.081\n1030 K:45.2/D:38.1 DIF:1.234",
         },
       }),
     });
