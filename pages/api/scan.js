@@ -89,13 +89,11 @@ export default async function handler(req, res) {
 
         // SMA50 ?? ??? cache
         const dailyCloses = ohlcCache["1d"]?.closes || null;
-        // debug: log isToday for each timeframe
-        const _debugIsToday = {
-          stochDailyIsToday: stochResults.daily?.isToday,
-          stochWeeklyIsToday: stochResults.weekly?.isToday,
-        };
         const evaluation = evalSignal(stochResults, dmaResults, cfg, dailyCloses);
-        if (symbol === "2287") evaluation._debug = _debugIsToday;
+        // inject debug info
+        evaluation._isToday_daily   = stochResults.daily?.isToday;
+        evaluation._isToday_weekly  = stochResults.weekly?.isToday;
+        evaluation._isToday_monthly = stochResults.monthly?.isToday;
 
         return {
           symbol,
@@ -105,6 +103,8 @@ export default async function handler(req, res) {
           d:     evaluation.d    != null ? +evaluation.d.toFixed(2)    : null,
           dif:   evaluation.dif  != null ? +evaluation.dif.toFixed(4)  : null,
           difma: evaluation.difma!= null ? +evaluation.difma.toFixed(4): null,
+          _d:    evaluation._isToday_daily,
+          _w:    evaluation._isToday_weekly,
         };
       } catch { return null; }
     };
