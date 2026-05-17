@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "5.5", status: "ok" });
+    return res.status(200).json({ version: "5.6", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -90,10 +90,6 @@ export default async function handler(req, res) {
         // SMA50 ?? ??? cache
         const dailyCloses = ohlcCache["1d"]?.closes || null;
         const evaluation = evalSignal(stochResults, dmaResults, cfg, dailyCloses);
-        // inject debug info
-        evaluation._isToday_daily   = stochResults.daily?.isToday;
-        evaluation._isToday_weekly  = stochResults.weekly?.isToday;
-        evaluation._isToday_monthly = stochResults.monthly?.isToday;
 
         return {
           symbol,
@@ -103,7 +99,6 @@ export default async function handler(req, res) {
           d:     evaluation.d    != null ? +evaluation.d.toFixed(2)    : null,
           dif:   evaluation.dif  != null ? +evaluation.dif.toFixed(4)  : null,
           difma: evaluation.difma!= null ? +evaluation.difma.toFixed(4): null,
-          _d:    evaluation._isToday_daily === undefined ? "undef" : evaluation._isToday_daily,
         };
       } catch { return null; }
     };
