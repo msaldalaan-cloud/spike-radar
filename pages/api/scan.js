@@ -1,4 +1,4 @@
-// pages/api/scan.js — v5.0 — weekly aggregation + K/D fix
+// pages/api/scan.js – v5.0 – weekly aggregation + K/D fix
 
 export const config = { maxDuration: 300 }; // Vercel Pro max 300s
 
@@ -43,7 +43,7 @@ const processStock = async (stock) => {
   const symbol = stock.symbol;
   try {
     const stochResults = {}, dmaResults = {};
-    // cache البيانات — نجلب كل فاصل مرة واحدة فقط
+    // cache البيانات -- نجلب كل فاصل مرة واحدة فقط
     const ohlcCache = {};
 
     const getOHLC = async (interval) => {
@@ -104,7 +104,7 @@ const processStock = async (stock) => {
   } catch { return null; }
 };
 
-// تشغيل دفعات متوازية — 8 أسهم في كل دفعة
+// تشغيل دفعات متوازية -- 8 أسهم في كل دفعة
 for (let i = 0; i < stocks.length; i += CONCURRENT) {
   if (Date.now() - startTime > 280000) break;
   const batch   = stocks.slice(i, i + CONCURRENT);
@@ -166,7 +166,7 @@ close: qjson.price,
 
 const lastDateStr = sorted[sorted.length-1].date;
 
-// آخر يوم تداول — نرجع للخلف حتى نجد يوم عمل
+// آخر يوم تداول – نرجع للخلف حتى نجد يوم عمل
 const lastTradingDay = (() => {
 const d = new Date();
 // السوق السعودي: الأحد-الخميس
@@ -179,7 +179,7 @@ return d.toISOString().split(“T”)[0];
 // isToday = آخر شمعة هي آخر يوم تداول
 const isToday = lastDateStr >= lastTradingDay;
 
-// إذا يومي — أرجع مباشرة
+// إذا يومي – أرجع مباشرة
 if (interval === “1d”) {
 return {
 closes:  sorted.map(c => +c.close),
@@ -189,7 +189,7 @@ isToday,
 };
 }
 
-// أسبوعي أو شهري — نجمّع يدوياً
+// أسبوعي أو شهري – نجمّع يدوياً
 const aggregated = aggregateCandles(sorted, interval);
 if (aggregated.length < 10) return null;
 
@@ -264,9 +264,9 @@ D.push(sum / dPeriod);
 }
 
 // %K = آخر عنصر في K (الأسرع)
-// %D = آخر عنصر في D (الأبطأ) — D أقصر من K بـ (dPeriod-1)
+// %D = آخر عنصر في D (الأبطأ) – D أقصر من K بـ (dPeriod-1)
 // لمطابقة نفس الشمعة: آخر D[m] يقابل K[m + dPeriod-1]
-// آخر قيم — K هو الأسرع (%K)، D هو الأبطأ (%D = SMA of K)
+// آخر قيم – K هو الأسرع (%K)، D هو الأبطأ (%D = SMA of K)
 // D أقصر من K بـ (dPeriod-1) عناصر
 const m      = D.length - 1;
 // %D = آخر D (الأبطأ)
