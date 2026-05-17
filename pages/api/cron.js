@@ -87,10 +87,17 @@ export default async function handler(req, res) {
           user_id:     ejsPub,
           accessToken: ejsPrivate,
           template_params: {
-            to_email: ejsEmail,
-            subject:  `📊 SPIKE RADAR — ${totalSignals} إشارة`,
-            message:  lines,
-            time:     now.toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" }),
+            to_email:      ejsEmail,
+            title:         `SPIKE RADAR -- ${totalSignals} إشارة`,
+            name:          "SPIKE RADAR",
+            time:          now.toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" }),
+            strategy_name: allPassed.map(s => s.stratName).join(", "),
+            scan_date:     now.toLocaleDateString("ar-SA", { timeZone: "Asia/Riyadh" }),
+            scan_time:     now.toLocaleTimeString("ar-SA", { timeZone: "Asia/Riyadh" }),
+            total_signals: String(totalSignals),
+            stocks_list:   allPassed.flatMap(({stratName, passed}) =>
+              passed.map(r => `${r.symbol} K:${r.k}/D:${r.d} DIF:${r.dif}`)
+            ).join("\n"),
           },
         }),
       });
