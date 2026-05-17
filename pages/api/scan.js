@@ -1,4 +1,4 @@
-// pages/api/scan.js -- v5.0 -- weekly aggregation + K/D fix
+// pages/api/scan.js -- v5.1 -- weekly aggregation + K/D fix
 
 export const config = { maxDuration: 300 }; // Vercel Pro max 300s
 
