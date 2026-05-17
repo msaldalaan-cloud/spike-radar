@@ -29,10 +29,11 @@ export default async function handler(req, res) {
 
   // ── قراءة المتغيرات من Vercel Environment ───────────────────
   const sahmkKey = process.env.SAHMK_API_KEY;
-  const ejsSvc   = process.env.EMAILJS_SERVICE_ID;
-  const ejsTpl   = process.env.EMAILJS_TEMPLATE_ID;
-  const ejsPub   = process.env.EMAILJS_PUBLIC_KEY;
-  const ejsEmail = process.env.EMAILJS_TO_EMAIL;
+  const ejsSvc     = process.env.EMAILJS_SERVICE_ID;
+  const ejsTpl     = process.env.EMAILJS_TEMPLATE_ID;
+  const ejsPub     = process.env.EMAILJS_PUBLIC_KEY;
+  const ejsPrivate = process.env.EMAILJS_PRIVATE_KEY;
+  const ejsEmail   = process.env.EMAILJS_TO_EMAIL;
   const base     = process.env.NEXT_PUBLIC_BASE_URL;
 
   if (!sahmkKey) return res.status(500).json({ error: "SAHMK_API_KEY غير موجود" });
@@ -84,6 +85,7 @@ export default async function handler(req, res) {
           service_id:  ejsSvc,
           template_id: ejsTpl,
           user_id:     ejsPub,
+          accessToken: ejsPrivate,
           template_params: {
             to_email: ejsEmail,
             subject:  `📊 SPIKE RADAR — ${totalSignals} إشارة`,
