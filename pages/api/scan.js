@@ -175,7 +175,14 @@ async function fetchOHLC(apiKey, symbol, interval) {
   })();
 
   // isToday = ??? ???? ?? ??? ??? ?????
-  const isToday = lastDateStr >= lastTradingDay;
+  // اذا السوق مفتوح الان يجب ان تكون شمعه اليوم موجوده
+  // اذا السوق مغلق يكفي ان تكون آخر شمعه = آخر يوم تداول
+  const nowRiyadh = new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Riyadh"}));
+  const dayNow    = nowRiyadh.getDay();
+  const minNow    = nowRiyadh.getHours()*60 + nowRiyadh.getMinutes();
+  const marketOpen = (dayNow >= 0 && dayNow <= 4) && minNow >= 600 && minNow <= 930;
+  const todayStr2  = new Date().toISOString().split("T")[0];
+  const isToday    = marketOpen ? lastDateStr >= todayStr2 : lastDateStr >= lastTradingDay;
 
   // ??? ???? -- ???? ??????
   if (interval === "1d") {
