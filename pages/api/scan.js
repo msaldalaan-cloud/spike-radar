@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "5.2", status: "ok" });
+    return res.status(200).json({ version: "5.3", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -177,12 +177,17 @@ async function fetchOHLC(apiKey, symbol, interval) {
   // isToday = ??? ???? ?? ??? ??? ?????
   // اذا السوق مفتوح الان يجب ان تكون شمعه اليوم موجوده
   // اذا السوق مغلق يكفي ان تكون آخر شمعه = آخر يوم تداول
-  const nowRiyadh = new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Riyadh"}));
-  const dayNow    = nowRiyadh.getDay();
-  const minNow    = nowRiyadh.getHours()*60 + nowRiyadh.getMinutes();
+  // حساب تاريخ اليوم بتوقيت الرياض
+  const nowRiyadh  = new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Riyadh"}));
+  const dayNow     = nowRiyadh.getDay();
+  const minNow     = nowRiyadh.getHours()*60 + nowRiyadh.getMinutes();
   const marketOpen = (dayNow >= 0 && dayNow <= 4) && minNow >= 600 && minNow <= 930;
-  const todayStr2  = new Date().toISOString().split("T")[0];
-  const isToday    = marketOpen ? lastDateStr >= todayStr2 : lastDateStr >= lastTradingDay;
+  // تاريخ اليوم بتوقيت الرياض (وليس UTC)
+  const yr = nowRiyadh.getFullYear();
+  const mo = String(nowRiyadh.getMonth()+1).padStart(2,"0");
+  const dy = String(nowRiyadh.getDate()).padStart(2,"0");
+  const todayRiyadh = yr + "-" + mo + "-" + dy;
+  const isToday     = marketOpen ? lastDateStr >= todayRiyadh : lastDateStr >= lastTradingDay;
 
   // ??? ???? -- ???? ??????
   if (interval === "1d") {
