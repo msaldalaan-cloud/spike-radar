@@ -187,7 +187,25 @@ async function fetchOHLC(apiKey, symbol, interval) {
   const mo = String(nowRiyadh.getMonth()+1).padStart(2,"0");
   const dy = String(nowRiyadh.getDate()).padStart(2,"0");
   const todayRiyadh = yr + "-" + mo + "-" + dy;
-  const isToday     = marketOpen ? lastDateStr >= todayRiyadh : lastDateStr >= lastTradingDay;
+  // اضف شمعة اليوم الحية لليومي ايضاً اذا السوق مفتوح
+  if (marketOpen && lastStr < todayRiyadh) {
+    try {
+      const qr    = await fetch(`${BASE}/quote/${symbol}/`, { headers: { "X-API-Key": apiKey } });
+      const qjson = await qr.json();
+      if (qjson.price) {
+        sorted.push({
+          date:  todayRiyadh,
+          open:  qjson.open  || qjson.price,
+          high:  qjson.high  || qjson.price,
+          low:   qjson.low   || qjson.price,
+          close: qjson.price,
+        });
+      }
+    } catch {}
+  }
+
+  const lastDateStrFinal = sorted[sorted.length-1].date;
+  const isToday = marketOpen ? lastDateStrFinal >= todayRiyadh : lastDateStrFinal >= lastTradingDay;
 
   // ??? ???? -- ???? ??????
   if (interval === "1d") {
