@@ -145,22 +145,7 @@ async function fetchOHLC(apiKey, symbol, interval) {
   const todayStr    = new Date().toISOString().split("T")[0];
   const lastStr     = sorted[sorted.length-1].date;
 
-  // ??? ???? ????? ??? ?? ??? ?????? (???????? ???????)
-  if (lastStr < todayStr && interval !== "1d") {
-    try {
-      const qr    = await fetch(`${BASE}/quote/${symbol}/`, { headers: { "X-API-Key": apiKey } });
-      const qjson = await qr.json();
-      if (qjson.price) {
-        sorted.push({
-          date:  todayStr,
-          open:  qjson.open  || qjson.price,
-          high:  qjson.high  || qjson.price,
-          low:   qjson.low   || qjson.price,
-          close: qjson.price,
-        });
-      }
-    } catch {}
-  }
+  // quote يُضاف لاحقاً بتوقيت الرياض
 
   const lastDateStr = sorted[sorted.length-1].date;
 
