@@ -62,10 +62,37 @@ export default async function handler(req, res) {
 
   if (allPassed.length > 0 && emailUser && emailPass) {
     const totalSignals = allPassed.reduce((a, b) => a + b.passed.length, 0);
+
+    // -- ذاكرة يومية: لا نرسل نفس الأسهم في نفس اليوم
+    const todayKey   = `sent_${now.getFullYear()}_${now.getMonth()}_${now.getDate()}`;
+    let sentToday    = [];
+    try { sentToday = (await kv.get(todayKey)) || []; } catch {}
+
+    // الأسهم الجديدة فقط (لم تُرسل اليوم)
+    const newPassed = allPassed.map(({ stratName, passed }) => ({
+      stratName,
+      passed: passed.filter(r => !sentToday.includes(r.symbol)),
+    })).filter(s => s.passed.length > 0);
+
+    if (newPassed.length === 0) {
+      return res.status(200).json({ ran: true, skipped: "نفس الأسهم أُرسلت اليوم", total: totalSignals });
+    }
+
+    // حفظ الأسهم المرسلة اليوم
+    const newSymbols = newPassed.flatMap(s => s.passed.map(r => r.symbol));
+    // احسب الثواني المتبقية حتى منتصف الليل بتوقيت الرياض
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0); // منتصف الليل القادم
+    const secondsUntilMidnight = Math.floor((midnight - now) / 1000);
+    try { await kv.set(todayKey, [...new Set([...sentToday, ...newSymbols])], { ex: secondsUntilMidnight }); } catch {}
+
+    // إعادة حساب بناءً على الجديد فقط
+    const allPassedFiltered = newPassed;
+    const totalSignalsNew   = allPassedFiltered.reduce((a, b) => a + b.passed.length, 0);
     const timeStr = now.toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" });
 
     // بناء HTML الإيميل
-    const rows = allPassed.flatMap(({ stratName, passed }) =>
+    const rows = allPassedFiltered.flatMap(({ stratName, passed }) =>
       passed.map(r => `
         <tr>
           <td style="padding:10px;border-bottom:1px solid #1e3a5f;font-weight:700;color:#00ff88;font-family:monospace">${r.symbol}</td>
@@ -97,11 +124,11 @@ export default async function handler(req, res) {
     <!-- Stats -->
     <div style="display:flex;gap:12px;margin-bottom:20px;justify-content:center">
       <div style="background:#0d1526;border:1px solid #00ff88;border-radius:8px;padding:14px 24px;text-align:center">
-        <div style="font-size:28px;font-weight:700;color:#00ff88">${totalSignals}</div>
+        <div style="font-size:28px;font-weight:700;color:#00ff88">${totalSignalsNew}</div>
         <div style="font-size:10px;color:#64748b;letter-spacing:2px">إشارة</div>
       </div>
       <div style="background:#0d1526;border:1px solid #1e3a5f;border-radius:8px;padding:14px 24px;text-align:center">
-        <div style="font-size:28px;font-weight:700;color:#0ea5e9">${allPassed.length}</div>
+        <div style="font-size:28px;font-weight:700;color:#0ea5e9">${allPassedFiltered.length}</div>
         <div style="font-size:10px;color:#64748b;letter-spacing:2px">استراتيجية</div>
       </div>
     </div>
@@ -142,7 +169,7 @@ export default async function handler(req, res) {
       await transporter.sendMail({
         from:    `"⚡ SPIKE RADAR" <${emailUser}>`,
         to:      emailUser,
-        subject: `⚡ SPIKE RADAR -- ${totalSignals} إشارة | ${timeStr}`,
+        subject: `⚡ SPIKE RADAR -- ${totalSignalsNew} إشارة | ${timeStr}`,
         html,
       });
     } catch (e) {
