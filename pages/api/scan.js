@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "6.1-debug", status: "ok" });
+    return res.status(200).json({ version: "6.2", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -349,8 +349,6 @@ function evalSignal(stochResults, dmaResults, cfg, closes) {
       ? stochCrossed
       : (k > d); // ??? = K ??? D ??? ????? ?? ??????
     if (t.osKey && ok) ok = kPrev < (t.osLvl ?? 20);
-    // DEBUG
-    if (symbol === '2285' || symbol === '1834') console.log(symbol, 'mode:', t.mode, 'crossed:', stochCrossed, 'ok:', ok, 'k:', k, 'kPrev:', kPrev, 'd:', d, 'dPrev:', dPrev, 'isToday:', t.data.isToday, 'osKey:', t.osKey, 'osLvl:', t.osLvl, 'kPrev<osLvl:', kPrev < (t.osLvl??20));
     if (t.sma50 && ok) ok = aboveSMA50;
     return ok;
   });
