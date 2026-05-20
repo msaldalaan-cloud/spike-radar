@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "6.6", status: "ok" });
+    return res.status(200).json({ version: "6.7", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -172,13 +172,13 @@ async function fetchOHLC(apiKey, symbol, interval) {
   const mo = String(nowRiyadh.getMonth()+1).padStart(2,"0");
   const dy = String(nowRiyadh.getDate()).padStart(2,"0");
   const todayRiyadh = yr + "-" + mo + "-" + dy;
-  // للأسبوعي والشهري فقط — اضف شمعة اليوم الحية
-  // اضف شمعة حية لكل الفواصل
-  if (true) {
-    try {
-      const qr    = await fetch(`${BASE}/quote/${symbol}/`, { headers: { "X-API-Key": apiKey } });
-      const qjson = await qr.json();
-      if (qjson.price) {
+  // جلب السعر الحي لتحديث آخر شمعة
+  try {
+    const qr    = await fetch(`${BASE}/quote/${symbol}/`, { headers: { "X-API-Key": apiKey } });
+    const qjson = await qr.json();
+    if (qjson.price) {
+      if (interval === "1d") {
+        // اليومي: استبدل شمعة اليوم او اضفها
         const idx = sorted.findIndex(c => c.date === todayRiyadh);
         if (idx !== -1) sorted.splice(idx, 1);
         sorted.push({
@@ -188,9 +188,15 @@ async function fetchOHLC(apiKey, symbol, interval) {
           low:   qjson.low   || qjson.price,
           close: qjson.price,
         });
+      } else {
+        // الأسبوعي والشهري: حدّث آخر شمعة موجودة فقط
+        const last = sorted[sorted.length-1];
+        last.close = +qjson.price;
+        if (qjson.high) last.high = Math.max(last.high, +qjson.high);
+        if (qjson.low)  last.low  = Math.min(last.low,  +qjson.low);
       }
-    } catch {}
-  }
+    }
+  } catch {}
 
   const lastDateStrFinal = sorted[sorted.length-1].date;
   const isToday = marketOpen ? lastDateStrFinal >= todayRiyadh : lastDateStrFinal >= lastTradingDay;
