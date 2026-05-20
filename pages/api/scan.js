@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "6.6", status: "ok" });
+    return res.status(200).json({ version: "7.0", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -172,28 +172,34 @@ async function fetchOHLC(apiKey, symbol, interval) {
   const mo = String(nowRiyadh.getMonth()+1).padStart(2,"0");
   const dy = String(nowRiyadh.getDate()).padStart(2,"0");
   const todayRiyadh = yr + "-" + mo + "-" + dy;
-  // اضف او استبدل شمعة اليوم بالسعر الحي
+  // جلب السعر الحي مرة واحدة
+  let livePrice = null, liveHigh = null, liveLow = null;
   try {
     const qr    = await fetch(`${BASE}/quote/${symbol}/`, { headers: { "X-API-Key": apiKey } });
     const qjson = await qr.json();
     if (qjson.price) {
-      const idx = sorted.findIndex(c => c.date === todayRiyadh);
-      if (idx !== -1) sorted.splice(idx, 1);
-      sorted.push({
-        date:  todayRiyadh,
-        open:  qjson.open  || qjson.price,
-        high:  qjson.high  || qjson.price,
-        low:   qjson.low   || qjson.price,
-        close: qjson.price,
-      });
+      livePrice = +qjson.price;
+      liveHigh  = qjson.high ? +qjson.high : livePrice;
+      liveLow   = qjson.low  ? +qjson.low  : livePrice;
     }
   } catch {}
 
-  const lastDateStrFinal = sorted[sorted.length-1].date;
-  const isToday = marketOpen ? lastDateStrFinal >= todayRiyadh : lastDateStrFinal >= lastTradingDay;
-
-  // ??? ???? -- ???? ??????
+  // اليومي: اضف او استبدل شمعة اليوم
   if (interval === "1d") {
+    if (livePrice) {
+      const idx = sorted.findIndex(c => c.date === todayRiyadh);
+      const prevOpen = idx !== -1 ? +sorted[idx].open : +sorted[sorted.length-1].close;
+      if (idx !== -1) sorted.splice(idx, 1);
+      sorted.push({
+        date:  todayRiyadh,
+        open:  prevOpen,
+        high:  liveHigh,
+        low:   liveLow,
+        close: livePrice,
+      });
+    }
+    const lastD   = sorted[sorted.length-1].date;
+    const isToday = marketOpen ? lastD >= todayRiyadh : lastD >= lastTradingDay;
     return {
       closes:  sorted.map(c => +c.close),
       highs:   sorted.map(c => +c.high),
@@ -202,9 +208,19 @@ async function fetchOHLC(apiKey, symbol, interval) {
     };
   }
 
-  // ?????? ?? ???? -- ????? ??????
+  // الاسبوعي والشهري: جمّع اولاً ثم حدّث آخر شمعة بالسعر الحي
   const aggregated = aggregateCandles(sorted, interval);
   if (aggregated.length < 10) return null;
+
+  if (livePrice) {
+    const last = aggregated[aggregated.length-1];
+    last.close = livePrice;
+    if (liveHigh > last.high) last.high = liveHigh;
+    if (liveLow  < last.low)  last.low  = liveLow;
+  }
+
+  const lastAgg = aggregated[aggregated.length-1].date;
+  const isToday = lastAgg >= lastTradingDay;
 
   return {
     closes:  aggregated.map(c => c.close),
