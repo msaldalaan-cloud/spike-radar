@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "6.2", status: "ok" });
+    return res.status(200).json({ version: "6.3", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -172,8 +172,8 @@ async function fetchOHLC(apiKey, symbol, interval) {
   const mo = String(nowRiyadh.getMonth()+1).padStart(2,"0");
   const dy = String(nowRiyadh.getDate()).padStart(2,"0");
   const todayRiyadh = yr + "-" + mo + "-" + dy;
-  // اضف شمعة اليوم الحية لكل الفواصل (اثناء السوق او بعده في نفس اليوم)
-  if (lastStr < todayRiyadh) {
+  // اضف شمعة اليوم الحية للأسبوعي والشهري فقط
+  if (lastStr < todayRiyadh && interval !== "1d") {
     try {
       const qr    = await fetch(`${BASE}/quote/${symbol}/`, { headers: { "X-API-Key": apiKey } });
       const qjson = await qr.json();
