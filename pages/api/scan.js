@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "7.0", status: "ok" });
+    return res.status(200).json({ version: "7.1", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -208,24 +208,53 @@ async function fetchOHLC(apiKey, symbol, interval) {
     };
   }
 
-  // الاسبوعي والشهري: جمّع اولاً ثم حدّث آخر شمعة بالسعر الحي
-  const aggregated = aggregateCandles(sorted, interval);
-  if (aggregated.length < 10) return null;
+  // الأسبوعي: جمّع أولاً ثم حدّث آخر شمعة بالسعر الحي
+  // الشهري: أضف شمعة اليوم قبل التجميع (منطق v6.6)
+  if (interval === "1w") {
+    const aggregated = aggregateCandles(sorted, interval);
+    if (aggregated.length < 10) return null;
 
-  if (livePrice) {
-    const last = aggregated[aggregated.length-1];
-    last.close = livePrice;
-    if (liveHigh > last.high) last.high = liveHigh;
-    if (liveLow  < last.low)  last.low  = liveLow;
+    if (livePrice) {
+      const last = aggregated[aggregated.length-1];
+      last.close = livePrice;
+      if (liveHigh > last.high) last.high = liveHigh;
+      if (liveLow  < last.low)  last.low  = liveLow;
+    }
+
+    const lastAgg = aggregated[aggregated.length-1].date;
+    const isToday = lastAgg >= lastTradingDay;
+
+    return {
+      closes:  aggregated.map(c => c.close),
+      highs:   aggregated.map(c => c.high),
+      lows:    aggregated.map(c => c.low),
+      isToday,
+    };
   }
 
-  const lastAgg = aggregated[aggregated.length-1].date;
-  const isToday = lastAgg >= lastTradingDay;
+  // الشهري: أضف quote لـ sorted أولاً ثم جمّع (منطق v6.6)
+  if (livePrice) {
+    const idx = sorted.findIndex(c => c.date === todayRiyadh);
+    if (idx !== -1) sorted.splice(idx, 1);
+    sorted.push({
+      date:  todayRiyadh,
+      open:  sorted[sorted.length-1]?.close || livePrice,
+      high:  liveHigh,
+      low:   liveLow,
+      close: livePrice,
+    });
+  }
+
+  const aggregatedM = aggregateCandles(sorted, interval);
+  if (aggregatedM.length < 10) return null;
+
+  const lastAggM = aggregatedM[aggregatedM.length-1].date;
+  const isToday  = lastAggM >= lastTradingDay;
 
   return {
-    closes:  aggregated.map(c => c.close),
-    highs:   aggregated.map(c => c.high),
-    lows:    aggregated.map(c => c.low),
+    closes:  aggregatedM.map(c => c.close),
+    highs:   aggregatedM.map(c => c.high),
+    lows:    aggregatedM.map(c => c.low),
     isToday,
   };
 }
