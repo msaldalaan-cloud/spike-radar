@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "7.2", status: "ok" });
+    return res.status(200).json({ version: "7.3", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -89,6 +89,36 @@ export default async function handler(req, res) {
 
         // SMA50 ?? ??? cache
         const dailyCloses = ohlcCache["1d"]?.closes || null;
+
+        // مرحلة 1: تقييم بدون الشهري
+        const cfgNoMonthly = { ...cfg, stochMonthly: false, dmaMonthly: false };
+        const evalPhase1   = evalSignal(stochResults, dmaResults, cfgNoMonthly, dailyCloses);
+
+        // إذا فشل في المرحلة الأولى — لا داعي للشهري
+        if (!evalPhase1.pass) {
+          return {
+            symbol,
+            name:  stock.name_ar || stock.name_en || symbol,
+            pass:  false,
+            k:     evalPhase1.k    != null ? +evalPhase1.k.toFixed(2)    : null,
+            d:     evalPhase1.d    != null ? +evalPhase1.d.toFixed(2)    : null,
+            dif:   evalPhase1.dif  != null ? +evalPhase1.dif.toFixed(4)  : null,
+            difma: evalPhase1.difma!= null ? +evalPhase1.difma.toFixed(4): null,
+          };
+        }
+
+        // مرحلة 2: إذا الشهري مطلوب — افحصه الآن
+        if (cfg.stochMonthly || cfg.dmaMonthly) {
+          if (cfg.stochMonthly && !stochResults.monthly) {
+            const dataM = await getOHLC("1m");
+            if (dataM) stochResults.monthly = { ...calcStoch(dataM.closes, dataM.highs, dataM.lows, 5, 3, 3), isToday: dataM.isToday };
+          }
+          if (cfg.dmaMonthly && !dmaResults.monthly) {
+            const dataM = ohlcCache["1m"] || await getOHLC("1m");
+            if (dataM) { const r = calcDMA(dataM.closes, 10, 50, 10); if (r) dmaResults.monthly = { ...r, isToday: dataM.isToday }; }
+          }
+        }
+
         const evaluation = evalSignal(stochResults, dmaResults, cfg, dailyCloses);
 
         return {
