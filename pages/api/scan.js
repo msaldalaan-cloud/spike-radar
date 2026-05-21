@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "7.3", status: "ok" });
+    return res.status(200).json({ version: "7.4", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -107,19 +107,13 @@ export default async function handler(req, res) {
           };
         }
 
-        // مرحلة 2: إذا الشهري مطلوب — افحصه الآن
-        if (cfg.stochMonthly || cfg.dmaMonthly) {
-          if (cfg.stochMonthly && !stochResults.monthly) {
-            const dataM = await getOHLC("1m");
-            if (dataM) stochResults.monthly = { ...calcStoch(dataM.closes, dataM.highs, dataM.lows, 5, 3, 3), isToday: dataM.isToday };
-          }
-          if (cfg.dmaMonthly && !dmaResults.monthly) {
-            const dataM = ohlcCache["1m"] || await getOHLC("1m");
-            if (dataM) { const r = calcDMA(dataM.closes, 10, 50, 10); if (r) dmaResults.monthly = { ...r, isToday: dataM.isToday }; }
-          }
-        }
+        // مرحلة 2: الشهري — إذا البيانات موجودة استخدمها مباشرة
+        // إذا لم تكن موجودة (ohlcCache["1m"] = null) نتجاوز الشهري
+        const cfgFinal = { ...cfg };
+        if (cfg.stochMonthly && !stochResults.monthly) cfgFinal.stochMonthly = false;
+        if (cfg.dmaMonthly   && !dmaResults.monthly)   cfgFinal.dmaMonthly   = false;
 
-        const evaluation = evalSignal(stochResults, dmaResults, cfg, dailyCloses);
+        const evaluation = evalSignal(stochResults, dmaResults, cfgFinal, dailyCloses);
 
         return {
           symbol,
