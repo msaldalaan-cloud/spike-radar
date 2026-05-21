@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "7.1-debug", status: "ok" });
+    return res.status(200).json({ version: "7.0", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -210,10 +210,7 @@ async function fetchOHLC(apiKey, symbol, interval) {
 
   // الاسبوعي والشهري: جمّع اولاً ثم حدّث آخر شمعة بالسعر الحي
   const aggregated = aggregateCandles(sorted, interval);
-  if (aggregated.length < 10) {
-    console.log(`${symbol} ${interval} aggregated.length=${aggregated.length} < 10 -> null`);
-    return null;
-  }
+  if (aggregated.length < 10) return null;
 
   if (livePrice) {
     const last = aggregated[aggregated.length-1];
