@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "7.0", status: "ok" });
+    return res.status(200).json({ version: "7.2", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -184,7 +184,7 @@ async function fetchOHLC(apiKey, symbol, interval) {
     }
   } catch {}
 
-  // اليومي: اضف او استبدل شمعة اليوم
+  // اليومي: v7.0 — ابحث عن شمعة اليوم واحذفها واضف الجديدة
   if (interval === "1d") {
     if (livePrice) {
       const idx = sorted.findIndex(c => c.date === todayRiyadh);
@@ -208,16 +208,21 @@ async function fetchOHLC(apiKey, symbol, interval) {
     };
   }
 
-  // الأسبوعي والشهري: جمّع أولاً ثم حدّث آخر شمعة بالسعر الحي
+  // الأسبوعي والشهري: v6.6 — اضف quote بتاريخ اليوم ثم جمّع
+  if (livePrice) {
+    const idx = sorted.findIndex(c => c.date === todayRiyadh);
+    if (idx !== -1) sorted.splice(idx, 1);
+    sorted.push({
+      date:  todayRiyadh,
+      open:  sorted[sorted.length-1]?.close || livePrice,
+      high:  liveHigh,
+      low:   liveLow,
+      close: livePrice,
+    });
+  }
+
   const aggregated = aggregateCandles(sorted, interval);
   if (aggregated.length < 10) return null;
-
-  if (livePrice) {
-    const last = aggregated[aggregated.length-1];
-    last.close = livePrice;
-    if (liveHigh > last.high) last.high = liveHigh;
-    if (liveLow  < last.low)  last.low  = liveLow;
-  }
 
   const lastAgg = aggregated[aggregated.length-1].date;
   const isToday = lastAgg >= lastTradingDay;
