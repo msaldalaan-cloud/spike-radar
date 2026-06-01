@@ -2,6 +2,27 @@
 import { kv } from "@vercel/kv";
 import nodemailer from "nodemailer";
 
+function getRiyadhTime() {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Riyadh",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(now).map(p => [p.type, p.value]));
+  return {
+    year:    +parts.year,
+    month:   +parts.month,
+    day:     +parts.day,
+    hours:   +parts.hour === 24 ? 0 : +parts.hour,
+    minutes: +parts.minute,
+    seconds: +parts.second,
+    weekday: new Date(+parts.year, +parts.month-1, +parts.day).getDay(),
+    mins:    (+parts.hour === 24 ? 0 : +parts.hour) * 60 + +parts.minute,
+  };
+}
+
 export default async function handler(req, res) {
 
   const auth = req.headers["authorization"];
@@ -9,18 +30,17 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const now  = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
-  const day  = now.getDay();
-  const mins = now.getHours() * 60 + now.getMinutes();
-
-  const isWeekday   = day >= 0 && day <= 4;
-  const isMarketHrs = mins >= 600 && mins <= 930;
+  const r = getRiyadhTime();
+  const isWeekday   = r.weekday >= 0 && r.weekday <= 4;
+  const isMarketHrs = r.mins >= 600 && r.mins <= 930;
+  const timeStr     = `${r.year}/${r.month}/${r.day} ${String(r.hours).padStart(2,"0")}:${String(r.minutes).padStart(2,"0")}`;
 
   if (!isWeekday || !isMarketHrs) {
     return res.status(200).json({
       skipped: true,
       reason:  "السوق مغلق",
-      time:    now.toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" }),
+      time:    timeStr,
+      debug:   { weekday: r.weekday, mins: r.mins, isWeekday, isMarketHrs },
     });
   }
 
@@ -56,120 +76,91 @@ export default async function handler(req, res) {
       const passed = (data.results || []).filter(r => r.pass);
       if (passed.length > 0) allPassed.push({ stratName: strat.name, passed });
     } catch (e) {
-      console.error(`Cron error — ${strat.name}:`, e.message);
+      console.error(`Cron error -- ${strat.name}:`, e.message);
     }
   }
 
   if (allPassed.length > 0 && emailUser && emailPass) {
     const totalSignals = allPassed.reduce((a, b) => a + b.passed.length, 0);
 
-    // -- ذاكرة يومية: لا نرسل نفس الأسهم في نفس اليوم
-    const todayKey   = `sent_${now.getFullYear()}_${now.getMonth()}_${now.getDate()}`;
-    let sentToday    = [];
+    // ذاكرة يومية
+    const todayKey = `sent_${r.year}_${r.month}_${r.day}`;
+    let sentToday  = [];
     try { sentToday = (await kv.get(todayKey)) || []; } catch {}
 
-    // الأسهم الجديدة فقط (لم تُرسل اليوم)
     const newPassed = allPassed.map(({ stratName, passed }) => ({
       stratName,
-      passed: passed.filter(r => !sentToday.includes(r.symbol)),
+      passed: passed.filter(p => !sentToday.includes(p.symbol)),
     })).filter(s => s.passed.length > 0);
 
     if (newPassed.length === 0) {
       return res.status(200).json({ ran: true, skipped: "نفس الأسهم أُرسلت اليوم", total: totalSignals });
     }
 
-    // حفظ الأسهم المرسلة اليوم
-    const newSymbols = newPassed.flatMap(s => s.passed.map(r => r.symbol));
-    // احسب الثواني المتبقية حتى منتصف الليل بتوقيت الرياض
-    const midnight = new Date(now);
-    midnight.setHours(24, 0, 0, 0); // منتصف الليل القادم
-    const secondsUntilMidnight = Math.floor((midnight - now) / 1000);
-    try { await kv.set(todayKey, [...new Set([...sentToday, ...newSymbols])], { ex: secondsUntilMidnight }); } catch {}
+    const newSymbols = newPassed.flatMap(s => s.passed.map(p => p.symbol));
+    const secUntilMidnight = (24 - r.hours) * 3600 - r.minutes * 60 - r.seconds;
+    try { await kv.set(todayKey, [...new Set([...sentToday, ...newSymbols])], { ex: secUntilMidnight }); } catch {}
 
-    // إعادة حساب بناءً على الجديد فقط
     const allPassedFiltered = newPassed;
     const totalSignalsNew   = allPassedFiltered.reduce((a, b) => a + b.passed.length, 0);
-    const timeStr = now.toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" });
 
-    // بناء HTML الإيميل
     const rows = allPassedFiltered.flatMap(({ stratName, passed }) =>
-      passed.map(r => `
+      passed.map(p => `
         <tr>
-          <td style="padding:10px;border-bottom:1px solid #1e3a5f;font-weight:700;color:#00ff88;font-family:monospace">${r.symbol}</td>
-          <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:#94a3b8">${r.name || ""}</td>
-          <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:#e2e8f0;font-family:monospace">${r.k?.toFixed(1) ?? "-"} / ${r.d?.toFixed(1) ?? "-"}</td>
-          <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:${(r.dif??0)>0?"#00ff88":"#ff4444"};font-family:monospace">${r.dif?.toFixed(3) ?? "-"}</td>
+          <td style="padding:10px;border-bottom:1px solid #1e3a5f;font-weight:700;color:#00ff88;font-family:monospace">${p.symbol}</td>
+          <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:#94a3b8">${p.name || ""}</td>
+          <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:#e2e8f0;font-family:monospace">${p.k?.toFixed(1) ?? "-"} / ${p.d?.toFixed(1) ?? "-"}</td>
+          <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:${(p.dif??0)>0?"#00ff88":"#ff4444"};font-family:monospace">${p.dif?.toFixed(3) ?? "-"}</td>
           <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:#64748b;font-size:11px">${stratName}</td>
         </tr>`)
     ).join("");
 
-    const html = `
-<!DOCTYPE html>
-<html dir="rtl">
-<head><meta charset="UTF-8"></head>
+    const html = `<!DOCTYPE html>
+<html dir="rtl"><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#080c14;font-family:'IBM Plex Mono',monospace">
-  <div style="max-width:600px;margin:0 auto;padding:24px">
-
-    <!-- Header -->
-    <div style="text-align:center;margin-bottom:24px">
-      <div style="font-size:11px;letter-spacing:3px;color:#0ea5e9;margin-bottom:6px">
-        STOCH 5,3,3 · DMA 10,50,10 · SAHMK API
-      </div>
-      <h1 style="font-size:26px;font-weight:700;color:#fff;letter-spacing:4px;margin:0">
-        ⚡ SPIKE RADAR
-      </h1>
-      <div style="margin-top:8px;font-size:12px;color:#64748b">${timeStr}</div>
+<div style="max-width:600px;margin:0 auto;padding:24px">
+  <div style="text-align:center;margin-bottom:24px">
+    <div style="font-size:11px;letter-spacing:3px;color:#0ea5e9;margin-bottom:6px">STOCH 5,3,3 · DMA 10,50,10 · SAHMK API</div>
+    <h1 style="font-size:26px;font-weight:700;color:#fff;letter-spacing:4px;margin:0">⚡ SPIKE RADAR</h1>
+    <div style="margin-top:8px;font-size:12px;color:#64748b">${timeStr}</div>
+  </div>
+  <div style="display:flex;gap:12px;margin-bottom:20px;justify-content:center">
+    <div style="background:#0d1526;border:1px solid #00ff88;border-radius:8px;padding:14px 24px;text-align:center">
+      <div style="font-size:28px;font-weight:700;color:#00ff88">${totalSignalsNew}</div>
+      <div style="font-size:10px;color:#64748b;letter-spacing:2px">إشارة</div>
     </div>
-
-    <!-- Stats -->
-    <div style="display:flex;gap:12px;margin-bottom:20px;justify-content:center">
-      <div style="background:#0d1526;border:1px solid #00ff88;border-radius:8px;padding:14px 24px;text-align:center">
-        <div style="font-size:28px;font-weight:700;color:#00ff88">${totalSignalsNew}</div>
-        <div style="font-size:10px;color:#64748b;letter-spacing:2px">إشارة</div>
-      </div>
-      <div style="background:#0d1526;border:1px solid #1e3a5f;border-radius:8px;padding:14px 24px;text-align:center">
-        <div style="font-size:28px;font-weight:700;color:#0ea5e9">${allPassedFiltered.length}</div>
-        <div style="font-size:10px;color:#64748b;letter-spacing:2px">استراتيجية</div>
-      </div>
-    </div>
-
-    <!-- Table -->
-    <div style="background:#0d1526;border:1px solid #1e3a5f;border-radius:8px;overflow:hidden">
-      <div style="padding:12px 16px;background:#080c14;border-bottom:1px solid #1e3a5f">
-        <span style="font-size:9px;letter-spacing:3px;color:#0ea5e9">✅ الإشارات</span>
-      </div>
-      <table style="width:100%;border-collapse:collapse">
-        <thead>
-          <tr style="background:#080c14">
-            <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155;letter-spacing:2px">الرمز</th>
-            <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155;letter-spacing:2px">الاسم</th>
-            <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155;letter-spacing:2px">K / D</th>
-            <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155;letter-spacing:2px">DIF</th>
-            <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155;letter-spacing:2px">الاستراتيجية</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-
-    <!-- Footer -->
-    <div style="text-align:center;margin-top:20px;font-size:10px;color:#334155">
-      SPIKE RADAR · السوق السعودي · تداول
+    <div style="background:#0d1526;border:1px solid #1e3a5f;border-radius:8px;padding:14px 24px;text-align:center">
+      <div style="font-size:28px;font-weight:700;color:#0ea5e9">${allPassedFiltered.length}</div>
+      <div style="font-size:10px;color:#64748b;letter-spacing:2px">استراتيجية</div>
     </div>
   </div>
-</body>
-</html>`;
+  <div style="background:#0d1526;border:1px solid #1e3a5f;border-radius:8px;overflow:hidden">
+    <div style="padding:12px 16px;background:#080c14;border-bottom:1px solid #1e3a5f">
+      <span style="font-size:9px;letter-spacing:3px;color:#0ea5e9">✅ الإشارات</span>
+    </div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:#080c14">
+        <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">الرمز</th>
+        <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">الاسم</th>
+        <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">K / D</th>
+        <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">DIF</th>
+        <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">الاستراتيجية</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>
+  <div style="text-align:center;margin-top:20px;font-size:10px;color:#334155">SPIKE RADAR · السوق السعودي · تداول</div>
+</div></body></html>`;
 
     try {
       const transporter = nodemailer.createTransport({
         service: "gmail",
         auth: { user: emailUser, pass: emailPass },
       });
-
       await transporter.sendMail({
-        from:    `"⚡ SPIKE RADAR" <${emailUser}>`,
+        from:    `"SPIKE RADAR" <${emailUser}>`,
         to:      emailUser,
-        subject: `⚡ SPIKE RADAR -- ${totalSignalsNew} إشارة | ${timeStr}`,
+        subject: `SPIKE RADAR -- ${totalSignalsNew} اشاره | ${timeStr}`,
         html,
       });
     } catch (e) {
@@ -179,7 +170,7 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     ran:     true,
-    time:    now.toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" }),
+    time:    timeStr,
     signals: allPassed.length,
     total:   allPassed.reduce((a, b) => a + b.passed.length, 0),
   });
