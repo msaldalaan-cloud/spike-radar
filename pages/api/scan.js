@@ -1,28 +1,27 @@
-// pages/api/scan.js -- v5.0 -- weekly aggregation + K/D fix
+// pages/api/scan.js -- v7.5 -- first stoch cross after DMA
 
-export const config = { maxDuration: 300 }; // Vercel Pro max 300s
+export const config = { maxDuration: 300 };
 
 const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "7.4", status: "ok" });
+    return res.status(200).json({ version: "7.5", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
   const { cfg } = req.body;
   const sahmkKey = process.env.SAHMK_API_KEY;
   if (!sahmkKey)
-    return res.status(500).json({ error: "SAHMK_API_KEY ??? ?????" });
+    return res.status(500).json({ error: "SAHMK_API_KEY missing" });
 
   const startTime = Date.now();
 
   try {
-    // ?? 1. ??? ????? ???? TASI ??? ??????????????????????????
     const listRes = await fetch(`${BASE}/companies/?market=TASI&limit=500`, {
       headers: { "X-API-Key": sahmkKey },
     });
-    if (!listRes.ok) return res.status(500).json({ error: `??? ??? ??????: ${listRes.status}` });
+    if (!listRes.ok) return res.status(500).json({ error: `failed: ${listRes.status}` });
 
     const listData = await listRes.json();
     const stocks = (listData.results || []).filter(s =>
@@ -35,67 +34,63 @@ export default async function handler(req, res) {
     if (!stocks.length)
       return res.status(200).json({ results: [], scannedAt: new Date().toISOString() });
 
-    const results = [];
-        const CONCURRENT = 8;
+    const results   = [];
+    const CONCURRENT = 8;
 
     const processStock = async (stock) => {
       const symbol = stock.symbol;
       try {
         const stochResults = {}, dmaResults = {};
-        // cache ???????? -- ???? ?? ???? ??? ????? ???
         const ohlcCache = {};
 
         const getOHLC = async (interval) => {
-          if (!ohlcCache[interval]) {
+          if (!ohlcCache[interval])
             ohlcCache[interval] = await fetchOHLC(sahmkKey, symbol, interval);
-          }
           return ohlcCache[interval];
         };
 
-        // ????? ??????? ????????
         const neededIntervals = new Set();
         if (cfg.stochDaily   || cfg.dmaDaily)   neededIntervals.add("1d");
         if (cfg.stochWeekly  || cfg.dmaWeekly)  neededIntervals.add("1w");
         if (cfg.stochMonthly || cfg.dmaMonthly) neededIntervals.add("1m");
-        // SMA50 ????? ???? ??????
         if ([cfg.stochDailySMA50,cfg.stochWeeklySMA50,cfg.stochMonthlySMA50,
              cfg.dmaDailySMA50,cfg.dmaWeeklySMA50,cfg.dmaMonthlySMA50].some(Boolean))
           neededIntervals.add("1d");
+        // الشرط الجديد يحتاج بيانات يومية دائماً
+        if (cfg.stochDailyFirstCross) neededIntervals.add("1d");
 
-        // ??? ??????? ???? ?????? ?????? ?????
         await Promise.all([...neededIntervals].map(iv => getOHLC(iv)));
 
-        // ???? Stoch
         for (const [key, cfgKey, interval] of [
-          ["daily",   "stochDaily",   "1d"],
-          ["weekly",  "stochWeekly",  "1w"],
-          ["monthly", "stochMonthly", "1m"],
+          ["daily","stochDaily","1d"],["weekly","stochWeekly","1w"],["monthly","stochMonthly","1m"],
         ]) {
           if (!cfg[cfgKey]) continue;
           const data = ohlcCache[interval];
           if (data) stochResults[key] = { ...calcStoch(data.closes, data.highs, data.lows, 5, 3, 3), isToday: data.isToday };
         }
 
-        // ???? DMA (?? ??? ??? cache)
         for (const [key, cfgKey, interval] of [
-          ["daily",   "dmaDaily",   "1d"],
-          ["weekly",  "dmaWeekly",  "1w"],
-          ["monthly", "dmaMonthly", "1m"],
+          ["daily","dmaDaily","1d"],["weekly","dmaWeekly","1w"],["monthly","dmaMonthly","1m"],
         ]) {
           if (!cfg[cfgKey]) continue;
           const data = ohlcCache[interval];
           if (data) { const r = calcDMA(data.closes, 10, 50, 10); if (r) dmaResults[key] = { ...r, isToday: data.isToday }; }
         }
 
-        // SMA50 ?? ??? cache
+        // حساب الشرط الجديد: أول عبور Stoch بعد آخر تقاطع DMA
+        let firstCrossOk = true;
+        if (cfg.stochDailyFirstCross && ohlcCache["1d"]) {
+          const d = ohlcCache["1d"];
+          firstCrossOk = isFirstStochCrossAfterDMA(d.closes, d.highs, d.lows);
+        }
+
         const dailyCloses = ohlcCache["1d"]?.closes || null;
 
         // مرحلة 1: تقييم بدون الشهري
         const cfgNoMonthly = { ...cfg, stochMonthly: false, dmaMonthly: false };
         const evalPhase1   = evalSignal(stochResults, dmaResults, cfgNoMonthly, dailyCloses);
 
-        // إذا فشل في المرحلة الأولى — لا داعي للشهري
-        if (!evalPhase1.pass) {
+        if (!evalPhase1.pass || !firstCrossOk) {
           return {
             symbol,
             name:  stock.name_ar || stock.name_en || symbol,
@@ -107,8 +102,7 @@ export default async function handler(req, res) {
           };
         }
 
-        // مرحلة 2: الشهري — إذا البيانات موجودة استخدمها مباشرة
-        // إذا لم تكن موجودة (ohlcCache["1m"] = null) نتجاوز الشهري
+        // مرحلة 2: الشهري
         const cfgFinal = { ...cfg };
         if (cfg.stochMonthly && !stochResults.monthly) cfgFinal.stochMonthly = false;
         if (cfg.dmaMonthly   && !dmaResults.monthly)   cfgFinal.dmaMonthly   = false;
@@ -127,7 +121,6 @@ export default async function handler(req, res) {
       } catch { return null; }
     };
 
-    // ????? ????? ??????? -- 8 ???? ?? ?? ????
     for (let i = 0; i < stocks.length; i += CONCURRENT) {
       if (Date.now() - startTime > 280000) break;
       const batch   = stocks.slice(i, i + CONCURRENT);
@@ -144,59 +137,44 @@ export default async function handler(req, res) {
   }
 }
 
-// ?? ??? OHLC ?????????????????????????????????????????????????????
+// ── جلب OHLC ─────────────────────────────────────────────────────
 async function fetchOHLC(apiKey, symbol, interval) {
   const to   = new Date().toISOString().split("T")[0];
-  // ???? ?????? ?????? ????? ?? ??????? ??????
   const days = interval === "1m" ? 1825 : 730;
   const from = new Date(Date.now() - days*24*60*60*1000).toISOString().split("T")[0];
 
-  const url = `${BASE}/historical/${symbol}/?interval=1d&from=${from}&to=${to}`;
-  const r   = await fetch(url, { headers: { "X-API-Key": apiKey } });
+  const r = await fetch(`${BASE}/historical/${symbol}/?interval=1d&from=${from}&to=${to}`, {
+    headers: { "X-API-Key": apiKey },
+  });
   if (!r.ok) return null;
 
-  const json    = await r.json();
-  const daily   = json.data || [];
+  const json  = await r.json();
+  const daily = json.data || [];
   if (daily.length < 10) return null;
 
   const sorted = [...daily].sort((a, b) => new Date(a.date) - new Date(b.date));
 
-  // ????: ??? ???? ?? ???? ???? ?? 7 ????
   const lastDate = new Date(sorted[sorted.length-1].date);
   if ((Date.now() - lastDate) / 86400000 > 7) return null;
 
-  // ?? ??? ???? ?? ??????
-  const todayStr    = new Date().toISOString().split("T")[0];
-  const lastStr     = sorted[sorted.length-1].date;
-
-  // quote يُضاف لاحقاً بتوقيت الرياض
-
-  const lastDateStr = sorted[sorted.length-1].date;
-
-  // ??? ??? ????? -- ???? ????? ??? ??? ??? ???
-  const lastTradingDay = (() => {
-    const d = new Date();
-    // ????? ???????: ?????-??????
-    const day = d.getDay(); // 0=Sun,1=Mon,...,5=Fri,6=Sat
-    if (day === 5) d.setDate(d.getDate()-1);      // ???? ? ????
-    else if (day === 6) d.setDate(d.getDate()-2); // ??? ? ????
-    return d.toISOString().split("T")[0];
-  })();
-
-  // isToday = ??? ???? ?? ??? ??? ?????
-  // اذا السوق مفتوح الان يجب ان تكون شمعه اليوم موجوده
-  // اذا السوق مغلق يكفي ان تكون آخر شمعه = آخر يوم تداول
-  // حساب تاريخ اليوم بتوقيت الرياض
-  const nowRiyadh  = new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Riyadh"}));
-  const dayNow     = nowRiyadh.getDay();
-  const minNow     = nowRiyadh.getHours()*60 + nowRiyadh.getMinutes();
+  const nowRiyadh = new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Riyadh"}));
+  const dayNow    = nowRiyadh.getDay();
+  const minNow    = nowRiyadh.getHours()*60 + nowRiyadh.getMinutes();
   const marketOpen = (dayNow >= 0 && dayNow <= 4) && minNow >= 600 && minNow <= 930;
-  // تاريخ اليوم بتوقيت الرياض (وليس UTC)
+
   const yr = nowRiyadh.getFullYear();
   const mo = String(nowRiyadh.getMonth()+1).padStart(2,"0");
   const dy = String(nowRiyadh.getDate()).padStart(2,"0");
   const todayRiyadh = yr + "-" + mo + "-" + dy;
-  // جلب السعر الحي مرة واحدة
+
+  const lastTradingDay = (() => {
+    const d   = new Date();
+    const day = d.getDay();
+    if (day === 5) d.setDate(d.getDate()-1);
+    else if (day === 6) d.setDate(d.getDate()-2);
+    return d.toISOString().split("T")[0];
+  })();
+
   let livePrice = null, liveHigh = null, liveLow = null;
   try {
     const qr    = await fetch(`${BASE}/quote/${symbol}/`, { headers: { "X-API-Key": apiKey } });
@@ -208,19 +186,13 @@ async function fetchOHLC(apiKey, symbol, interval) {
     }
   } catch {}
 
-  // اليومي: v7.0 — ابحث عن شمعة اليوم واحذفها واضف الجديدة
+  // اليومي: استبدل شمعة اليوم بالسعر الحي
   if (interval === "1d") {
     if (livePrice) {
       const idx = sorted.findIndex(c => c.date === todayRiyadh);
       const prevOpen = idx !== -1 ? +sorted[idx].open : +sorted[sorted.length-1].close;
       if (idx !== -1) sorted.splice(idx, 1);
-      sorted.push({
-        date:  todayRiyadh,
-        open:  prevOpen,
-        high:  liveHigh,
-        low:   liveLow,
-        close: livePrice,
-      });
+      sorted.push({ date: todayRiyadh, open: prevOpen, high: liveHigh, low: liveLow, close: livePrice });
     }
     const lastD   = sorted[sorted.length-1].date;
     const isToday = marketOpen ? lastD >= todayRiyadh : lastD >= lastTradingDay;
@@ -232,16 +204,14 @@ async function fetchOHLC(apiKey, symbol, interval) {
     };
   }
 
-  // الأسبوعي والشهري: v6.6 — اضف quote بتاريخ اليوم ثم جمّع
+  // الأسبوعي والشهري: أضف quote ثم جمّع
   if (livePrice) {
     const idx = sorted.findIndex(c => c.date === todayRiyadh);
     if (idx !== -1) sorted.splice(idx, 1);
     sorted.push({
       date:  todayRiyadh,
       open:  sorted[sorted.length-1]?.close || livePrice,
-      high:  liveHigh,
-      low:   liveLow,
-      close: livePrice,
+      high:  liveHigh, low: liveLow, close: livePrice,
     });
   }
 
@@ -252,47 +222,38 @@ async function fetchOHLC(apiKey, symbol, interval) {
   const isToday = lastAgg >= lastTradingDay;
 
   return {
-    closes:  aggregated.map(c => c.close),
-    highs:   aggregated.map(c => c.high),
-    lows:    aggregated.map(c => c.low),
+    closes: aggregated.map(c => c.close),
+    highs:  aggregated.map(c => c.high),
+    lows:   aggregated.map(c => c.low),
     isToday,
   };
 }
 
-// ?? ????? ??????? ?????? ??????????????????????????????????????????
+// ── تجميع الشمعات ────────────────────────────────────────────────
 function aggregateCandles(daily, interval) {
   const groups = {};
-
   for (const c of daily) {
-    const d   = new Date(c.date);
+    const d = new Date(c.date);
     let key;
-
     if (interval === "1w") {
-      // ????? ???????: ??? ????? = ????? ???????
-      const day    = d.getDay(); // 0=Sun
-      const sunday = new Date(d);
-      sunday.setDate(d.getDate() - day);
-      key = sunday.toISOString().split("T")[0];
+      const sun = new Date(d);
+      sun.setDate(d.getDate() - d.getDay());
+      key = sun.toISOString().split("T")[0];
     } else {
-      // ????
       key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
     }
-
     if (!groups[key]) {
-      groups[key] = { open: +c.open, high: +c.high, low: +c.low, close: +c.close, date: c.date };
+      groups[key] = { open:+c.open, high:+c.high, low:+c.low, close:+c.close, date:c.date };
     } else {
       groups[key].high  = Math.max(groups[key].high, +c.high);
       groups[key].low   = Math.min(groups[key].low,  +c.low);
-      groups[key].close = +c.close; // ??? ????? ?? ???????/?????
+      groups[key].close = +c.close;
     }
   }
-
-  // ????? ?? ???????? ??? ???? ?????? (?????? ????? ???? ??? ????)
-  const keys = Object.keys(groups).sort();
-  return keys.map(k => groups[k]);
+  return Object.keys(groups).sort().map(k => groups[k]);
 }
 
-// ?? Stochastic 5,3,3 ?????????????????????????????????????????????
+// ── Stochastic 5,3,3 ─────────────────────────────────────────────
 function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
   const rawK = [];
   for (let i = kPeriod-1; i < closes.length; i++) {
@@ -303,69 +264,111 @@ function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
     }
     rawK.push(hh === ll ? 50 : ((closes[i]-ll)/(hh-ll))*100);
   }
-
   const K = [];
-  for (let i = smooth-1; i < rawK.length; i++) {
-    let sum = 0;
-    for (let j = i-smooth+1; j <= i; j++) sum += rawK[j];
-    K.push(sum / smooth);
-  }
-
+  for (let i=smooth-1;i<rawK.length;i++){let s=0;for(let j=i-smooth+1;j<=i;j++)s+=rawK[j];K.push(s/smooth);}
   const D = [];
-  for (let i = dPeriod-1; i < K.length; i++) {
-    let sum = 0;
-    for (let j = i-dPeriod+1; j <= i; j++) sum += K[j];
-    D.push(sum / dPeriod);
-  }
-
-  // %K = ??? ???? ?? K (??????)
-  // %D = ??? ???? ?? D (??????) -- D ???? ?? K ?? (dPeriod-1)
-  // ??????? ??? ??????: ??? D[m] ????? K[m + dPeriod-1]
-  // ??? ??? -- K ?? ?????? (%K)? D ?? ?????? (%D = SMA of K)
-  // D ???? ?? K ?? (dPeriod-1) ?????
-  const m      = D.length - 1;
-  // %D = ??? D (??????)
-  // %K ???????? = K[m + dPeriod-1] = K[K.length-1]
-  // K = %K (??????) , D = %D (?????? = SMA of K)
-  // ?????? ????: k < d ?? ??????? k > d ?? ??????
-  const k     = K[m + (dPeriod-1)];      // ??? %K
-  const kPrev = K[m + (dPeriod-1) - 1];
-  const d     = D[m];                    // ??? %D
+  for (let i=dPeriod-1;i<K.length;i++){let s=0;for(let j=i-dPeriod+1;j<=i;j++)s+=K[j];D.push(s/dPeriod);}
+  const m = D.length - 1;
+  const k     = K[m+(dPeriod-1)];
+  const kPrev = K[m+(dPeriod-1)-1];
+  const d     = D[m];
   const dPrev = D[m-1];
-
-  const crossedLastBar = kPrev < dPrev && k > d;
-  const kAbovePrev     = kPrev > dPrev;
-
-  return { k, kPrev, d, dPrev, crossedLastBar, kAbovePrev };
+  return { k, kPrev, d, dPrev, crossedLastBar: kPrev<dPrev&&k>d, kAbovePrev: kPrev>dPrev };
 }
 
-// ?? DMA 10,50,10 ?????????????????????????????????????????????????
+// ── DMA 10,50,10 ─────────────────────────────────────────────────
 function calcDMA(closes, fast, slow, signal) {
   if (closes.length < slow + signal) return null;
   const difArr = [];
-  for (let i = slow-1; i < closes.length; i++) {
-    let sF = 0, sS = 0;
-    for (let j = i-fast+1; j <= i; j++) sF += closes[j];
-    for (let j = i-slow+1; j <= i; j++) sS += closes[j];
-    difArr.push(sF/fast - sS/slow);
+  for (let i=slow-1;i<closes.length;i++){
+    let sF=0,sS=0;
+    for(let j=i-fast+1;j<=i;j++) sF+=closes[j];
+    for(let j=i-slow+1;j<=i;j++) sS+=closes[j];
+    difArr.push(sF/fast-sS/slow);
   }
   const k2 = 2/(signal+1);
-  let difma = difArr.slice(0, signal).reduce((a,b)=>a+b)/signal;
-  for (let i = signal; i < difArr.length; i++) difma = difArr[i]*k2 + difma*(1-k2);
-
-  let difmaPrev = difArr.slice(0, signal-1).reduce((a,b)=>a+b)/(signal-1);
-  for (let i = signal-1; i < difArr.length-1; i++) difmaPrev = difArr[i]*k2 + difmaPrev*(1-k2);
-
-  const dif     = difArr[difArr.length-1];
-  const difPrev = difArr[difArr.length-2];
-
-  const crossedLastBar = difPrev < difmaPrev && dif > difma;
-  const difAbovePrev   = difPrev > difmaPrev;
-
-  return { dif, difPrev, difma, difmaPrev, crossedLastBar, difAbovePrev };
+  let difma = difArr.slice(0,signal).reduce((a,b)=>a+b)/signal;
+  for(let i=signal;i<difArr.length;i++) difma=difArr[i]*k2+difma*(1-k2);
+  let difmaPrev = difArr.slice(0,signal-1).reduce((a,b)=>a+b)/(signal-1);
+  for(let i=signal-1;i<difArr.length-1;i++) difmaPrev=difArr[i]*k2+difmaPrev*(1-k2);
+  const dif=difArr[difArr.length-1], difPrev=difArr[difArr.length-2];
+  return { dif, difPrev, difma, difmaPrev, crossedLastBar:difPrev<difmaPrev&&dif>difma, difAbovePrev:difPrev>difmaPrev };
 }
 
-// ?? ????? ?????? ?????????????????????????????????????????????????
+// ── الشرط الجديد: أول عبور Stoch بعد آخر تقاطع DMA ───────────────
+function isFirstStochCrossAfterDMA(closes, highs, lows) {
+  if (closes.length < 60) return false;
+
+  // 1. احسب DMA على كل البيانات
+  const fast=10, slow=50, signal=10;
+  const difArr = [];
+  for (let i=slow-1;i<closes.length;i++){
+    let sF=0,sS=0;
+    for(let j=i-fast+1;j<=i;j++) sF+=closes[j];
+    for(let j=i-slow+1;j<=i;j++) sS+=closes[j];
+    difArr.push(sF/fast-sS/slow);
+  }
+  const k2=2/(signal+1);
+  const difmaArr = [];
+  let difma = difArr.slice(0,signal).reduce((a,b)=>a+b)/signal;
+  difmaArr.push(difma);
+  for(let i=signal;i<difArr.length;i++){
+    difma=difArr[i]*k2+difma*(1-k2);
+    difmaArr.push(difma);
+  }
+
+  // 2. ابحث عن آخر تقاطع DMA من تحت لفوق
+  // difmaArr[i] يقابل closes[slow-1+i]
+  let lastDmaCrossIdx = -1;
+  for (let i=1; i<difmaArr.length; i++) {
+    if (difArr[i-1] < difmaArr[i-1] && difArr[i] > difmaArr[i]) {
+      lastDmaCrossIdx = slow - 1 + i; // index في closes
+    }
+  }
+
+  if (lastDmaCrossIdx === -1) return false; // لا يوجد تقاطع DMA
+
+  // 3. احسب Stoch على البيانات بعد آخر تقاطع DMA
+  const kPeriod=5, smooth=3, dPeriod=3;
+  const rawK = [];
+  for (let i=kPeriod-1;i<closes.length;i++){
+    let hh=highs[i],ll=lows[i];
+    for(let j=i-kPeriod+1;j<=i;j++){if(highs[j]>hh)hh=highs[j];if(lows[j]<ll)ll=lows[j];}
+    rawK.push(hh===ll?50:((closes[i]-ll)/(hh-ll))*100);
+  }
+  const K=[];
+  for(let i=smooth-1;i<rawK.length;i++){let s=0;for(let j=i-smooth+1;j<=i;j++)s+=rawK[j];K.push(s/smooth);}
+  const D=[];
+  for(let i=dPeriod-1;i<K.length;i++){let s=0;for(let j=i-dPeriod+1;j<=i;j++)s+=K[j];D.push(s/dPeriod);}
+
+  // index تحويل: K[i] يقابل closes[kPeriod-1+smooth-1+i] = closes[kPeriod+smooth+i-2]
+  // D[i] يقابل K[i+dPeriod-1]
+  // D[m] = D[D.length-1] → K = K[K.length-1] → closes[kPeriod+smooth+dPeriod+K.length-3]
+  // أبسط: نستخدم index مباشر
+  const kOffset = kPeriod - 1 + smooth - 1; // بداية K في closes
+  const dOffset = kOffset + dPeriod - 1;     // بداية D في closes
+
+  // 4. تحقق: هل عبر Stoch من تحت لفوق بعد lastDmaCrossIdx وقبل آخر شمعة؟
+  let stochCrossedAfterDMA = false;
+  for (let i=0; i<D.length-1; i++) {
+    const closesIdx = dOffset + i; // index في closes
+    if (closesIdx <= lastDmaCrossIdx) continue; // قبل تقاطع DMA
+    if (closesIdx >= closes.length - 1) break;  // لا نشمل آخر شمعة (اليوم)
+    // هل K[i+dPeriod-1] عبر D[i]؟
+    const ki     = i + dPeriod - 1;
+    const kiPrev = ki - 1;
+    if (ki >= K.length || kiPrev < 0) continue;
+    if (K[kiPrev] < D[i-1] && K[ki] > D[i]) {
+      stochCrossedAfterDMA = true;
+      break;
+    }
+  }
+
+  // إذا لم يعبر Stoch بعد DMA → هذا أول عبور ✅
+  return !stochCrossedAfterDMA;
+}
+
+// ── تقييم الشروط ─────────────────────────────────────────────────
 function evalSignal(stochResults, dmaResults, cfg, closes) {
   const sma50 = closes && closes.length >= 50
     ? closes.slice(-50).reduce((a,b)=>a+b)/50 : null;
@@ -373,57 +376,46 @@ function evalSignal(stochResults, dmaResults, cfg, closes) {
   const aboveSMA50 = sma50 !== null && price !== null && price > sma50;
 
   const stochTFs = [
-    { active: cfg.stochDaily,   mode: cfg.stochDailyMode,   data: stochResults.daily,
-      osKey: cfg.stochDailyOS,  osLvl: cfg.stochDailyOSLevel,  sma50: cfg.stochDailySMA50  },
-    { active: cfg.stochWeekly,  mode: cfg.stochWeeklyMode,  data: stochResults.weekly,
-      osKey: cfg.stochWeeklyOS, osLvl: cfg.stochWeeklyOSLevel, sma50: cfg.stochWeeklySMA50 },
-    { active: cfg.stochMonthly, mode: cfg.stochMonthlyMode, data: stochResults.monthly,
-      osKey: cfg.stochMonthlyOS,osLvl: cfg.stochMonthlyOSLevel,sma50: cfg.stochMonthlySMA50},
+    { active:cfg.stochDaily,   mode:cfg.stochDailyMode,   data:stochResults.daily,
+      osKey:cfg.stochDailyOS,  osLvl:cfg.stochDailyOSLevel,  sma50:cfg.stochDailySMA50  },
+    { active:cfg.stochWeekly,  mode:cfg.stochWeeklyMode,  data:stochResults.weekly,
+      osKey:cfg.stochWeeklyOS, osLvl:cfg.stochWeeklyOSLevel, sma50:cfg.stochWeeklySMA50 },
+    { active:cfg.stochMonthly, mode:cfg.stochMonthlyMode, data:stochResults.monthly,
+      osKey:cfg.stochMonthlyOS,osLvl:cfg.stochMonthlyOSLevel,sma50:cfg.stochMonthlySMA50},
   ].filter(t => t.active);
 
-  // ??? ???? ????? ??? ?? ?????? ? ??? ??????
   if (stochTFs.some(t => !t.data)) return { pass: false };
 
   const stochOk = stochTFs.length === 0 || stochTFs.every(t => {
-    const { k, d, kPrev, dPrev, crossedLastBar, kAbovePrev } = t.data;
-    // crossedLastBar: kPrev < dPrev AND k > d (????? ??? ??? ????)
-    // kAbovePrev: kPrev > dPrev (K ???? ??? D ?? ?????? ??????? ?????)
-    // ???? ????: ????? ??? ??? ???? + ??? ???? ?????
+    const { k, d, kPrev, dPrev } = t.data;
     const stochCrossed = kPrev < dPrev && k > d && (t.data.isToday === true);
-    let ok = t.mode === "يعبر الآن"
-      ? stochCrossed
-      : (k > d); // ??? = K ??? D ??? ????? ?? ??????
+    let ok = t.mode === "يعبر الآن" ? stochCrossed : (k > d);
     if (t.osKey && ok) ok = kPrev < (t.osLvl ?? 20);
     if (t.sma50 && ok) ok = aboveSMA50;
     return ok;
   });
 
   const dmaTFs = [
-    { active: cfg.dmaDaily,   mode: cfg.dmaDailyMode,   data: dmaResults.daily,
-      zero: cfg.dmaDailyZero,  sma50: cfg.dmaDailySMA50   },
-    { active: cfg.dmaWeekly,  mode: cfg.dmaWeeklyMode,  data: dmaResults.weekly,
-      zero: cfg.dmaWeeklyZero, sma50: cfg.dmaWeeklySMA50  },
-    { active: cfg.dmaMonthly, mode: cfg.dmaMonthlyMode, data: dmaResults.monthly,
-      zero: cfg.dmaMonthlyZero,sma50: cfg.dmaMonthlySMA50 },
+    { active:cfg.dmaDaily,   mode:cfg.dmaDailyMode,   data:dmaResults.daily,
+      zero:cfg.dmaDailyZero,  sma50:cfg.dmaDailySMA50   },
+    { active:cfg.dmaWeekly,  mode:cfg.dmaWeeklyMode,  data:dmaResults.weekly,
+      zero:cfg.dmaWeeklyZero, sma50:cfg.dmaWeeklySMA50  },
+    { active:cfg.dmaMonthly, mode:cfg.dmaMonthlyMode, data:dmaResults.monthly,
+      zero:cfg.dmaMonthlyZero,sma50:cfg.dmaMonthlySMA50 },
   ].filter(t => t.active);
 
-  // ??? ???? ????? ??? ?? ?????? ? ??? ??????
   if (dmaTFs.some(t => !t.data)) return { pass: false };
 
   const dmaOk = dmaTFs.length === 0 || dmaTFs.every(t => {
-    const { dif, difma, difPrev, difmaPrev, crossedLastBar, difAbovePrev } = t.data;
-    // ???? ????: ????? ??? ??? ???? + ??? ???? ?????
+    const { dif, difma, difPrev, difmaPrev } = t.data;
     const dmaCrossed = difPrev < difmaPrev && dif > difma && (t.data.isToday === true);
-    let ok = t.mode === "يعبر الآن"
-      ? dmaCrossed
-      : (dif > difma); // ??? = DIF ??? DIFMA ??? ????? ?? ??????
+    let ok = t.mode === "يعبر الآن" ? dmaCrossed : (dif > difma);
     if (t.zero  && ok) ok = dif > 0;
     if (t.sma50 && ok) ok = aboveSMA50;
     return ok;
   });
 
-  const ls = stochResults.daily || stochResults.weekly || stochResults.monthly || {};
-  const ld = dmaResults.daily   || dmaResults.weekly   || dmaResults.monthly   || {};
-
-  return { pass: stochOk && dmaOk, k: ls.k, d: ls.d, dif: ld.dif, difma: ld.difma };
+  const ls = stochResults.daily||stochResults.weekly||stochResults.monthly||{};
+  const ld = dmaResults.daily  ||dmaResults.weekly  ||dmaResults.monthly  ||{};
+  return { pass: stochOk && dmaOk, k:ls.k, d:ls.d, dif:ld.dif, difma:ld.difma };
 }
