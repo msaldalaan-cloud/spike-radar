@@ -1,17 +1,18 @@
 import { useState, useEffect } from "react";
 
 const DEFAULT_CFG = {
-  // Stochastic — كل فاصل مستقل
+  // Stochastic
   stochDaily:       false, stochDailyMode:   "يعبر الآن",
   stochDailyOS:     false, stochDailyOSLevel:  20,
   stochDailySMA50:  false,
+  stochDailyFirstCross: false,
   stochWeekly:      false, stochWeeklyMode:  "يعبر الآن",
   stochWeeklyOS:    false, stochWeeklyOSLevel: 20,
   stochWeeklySMA50: false,
   stochMonthly:     false, stochMonthlyMode: "يعبر الآن",
   stochMonthlyOS:   false, stochMonthlyOSLevel:20,
   stochMonthlySMA50:false,
-  // DMA — كل فاصل مستقل
+  // DMA
   dmaDaily:      false, dmaDailyMode:   "يعبر الآن",
   dmaDailyZero:  false, dmaDailySMA50:  false,
   dmaWeekly:     false, dmaWeeklyMode:  "يعبر الآن",
@@ -44,7 +45,6 @@ export default function Scanner() {
     return () => clearInterval(tick);
   }, []);
 
-  // ── استراتيجيات من الـ API ────────────────────────────────────
   const fetchStrategies = async () => {
     try {
       const r = await fetch("/api/strategies");
@@ -75,18 +75,15 @@ export default function Scanner() {
         body: JSON.stringify({ id }),
       });
       setStrats(p => p.filter(s => s.id !== id));
-      addLog("🗑️ تم الحذف — توقف الفحص التلقائي لهذه الاستراتيجية", "info");
+      addLog("🗑️ تم الحذف", "info");
     } catch (e) { addLog("❌ " + e.message, "err"); }
   };
-
-
 
   const loadStrategy = (s) => { setCfg(s.cfg); addLog(`📂 تحميل: ${s.name}`, "info"); };
 
   const addLog = (msg, type = "info") =>
     setLog(p => [{ msg, type, t: new Date().toLocaleTimeString("ar-SA") }, ...p].slice(0, 60));
 
-  // ── فحص ─────────────────────────────────────────────────────
   const runScan = async (scanCfg = cfg) => {
     setScanning(true);
     setResults([]);
@@ -106,8 +103,6 @@ export default function Scanner() {
     finally { setScanning(false); }
   };
 
-
-
   const set = (k, v) => setCfg(p => ({ ...p, [k]: v }));
   const passed = results.filter(r => r.pass);
   const failed = results.filter(r => !r.pass);
@@ -116,7 +111,6 @@ export default function Scanner() {
     <div style={S.page}>
       <style>{CSS}</style>
 
-      {/* Header */}
       <div style={{ textAlign:"center", marginBottom:28 }}>
         <div className="sub">STOCH 5,3,3 · DMA 10,50,10 · SAHMK API</div>
         <h1 style={S.title}>⚡ SPIKE RADAR</h1>
@@ -130,7 +124,7 @@ export default function Scanner() {
 
       <div style={S.grid}>
 
-        {/* ── يسار: الإعدادات ── */}
+        {/* يسار: الإعدادات */}
         <div>
 
           {/* Stochastic */}
@@ -145,7 +139,6 @@ export default function Scanner() {
                 background: cfg[activeKey] ? "rgba(14,165,233,0.08)" : "rgba(255,255,255,0.02)",
                 border: `1px solid ${cfg[activeKey] ? "rgba(14,165,233,0.3)" : "#1e3a5f"}`,
                 transition:"all .2s" }}>
-                {/* الفاصل + الشرط */}
                 <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: cfg[activeKey] ? 8 : 0 }}>
                   <label className="cb" style={{ margin:0 }}>
                     <input type="checkbox" checked={cfg[activeKey]} onChange={e => set(activeKey, e.target.checked)} />
@@ -160,10 +153,8 @@ export default function Scanner() {
                     </div>
                   )}
                 </div>
-                {/* الفلاتر الإضافية */}
                 {cfg[activeKey] && (
                   <div style={{ paddingRight:4, borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:8 }}>
-                    {/* Oversold */}
                     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
                       <label className="cb" style={{ margin:0, flex:1 }}>
                         <input type="checkbox" checked={cfg[osKey]} onChange={e => set(osKey, e.target.checked)} />
@@ -173,11 +164,17 @@ export default function Scanner() {
                         onChange={e => set(osLvlKey, +e.target.value)}
                         style={{ width:55, padding:"3px 6px", fontSize:10 }} />
                     </div>
-                    {/* SMA50 */}
                     <label className="cb" style={{ margin:0 }}>
                       <input type="checkbox" checked={cfg[sma50Key]} onChange={e => set(sma50Key, e.target.checked)} />
                       <span style={{ fontSize:10 }}>السعر فوق SMA 50</span>
                     </label>
+                    {/* أول عبور بعد DMA — يومي فقط عند يعبر الآن */}
+                    {activeKey === "stochDaily" && cfg[modeKey] === "يعبر الآن" && (
+                      <label className="cb" style={{ margin:0, marginTop:4 }}>
+                        <input type="checkbox" checked={cfg.stochDailyFirstCross} onChange={e => set("stochDailyFirstCross", e.target.checked)} />
+                        <span style={{ fontSize:10, color:"#f59e0b" }}>أول عبور بعد DMA</span>
+                      </label>
+                    )}
                   </div>
                 )}
               </div>
@@ -196,7 +193,6 @@ export default function Scanner() {
                 background: cfg[activeKey] ? "rgba(14,165,233,0.08)" : "rgba(255,255,255,0.02)",
                 border: `1px solid ${cfg[activeKey] ? "rgba(14,165,233,0.3)" : "#1e3a5f"}`,
                 transition:"all .2s" }}>
-                {/* الفاصل + الشرط */}
                 <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: cfg[activeKey] ? 8 : 0 }}>
                   <label className="cb" style={{ margin:0 }}>
                     <input type="checkbox" checked={cfg[activeKey]} onChange={e => set(activeKey, e.target.checked)} />
@@ -211,7 +207,6 @@ export default function Scanner() {
                     </div>
                   )}
                 </div>
-                {/* الفلاتر الإضافية */}
                 {cfg[activeKey] && (
                   <div style={{ paddingRight:4, borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:8 }}>
                     <label className="cb" style={{ margin:0, marginBottom:6 }}>
@@ -260,10 +255,9 @@ export default function Scanner() {
           </div>
         </div>
 
-        {/* ── يمين: التشغيل والنتائج ── */}
+        {/* يمين: التشغيل والنتائج */}
         <div>
 
-          {/* التشغيل */}
           <div className="card">
             <div className="sec-title">🚀 التشغيل</div>
             <button className="btn btn-primary" style={{ width:"100%", marginBottom:12 }} onClick={() => runScan()} disabled={scanning}>
@@ -285,13 +279,13 @@ export default function Scanner() {
             </div>
           </div>
 
-          {/* النتائج — إشارات */}
           {passed.length > 0 && (
             <div className="card">
               <div className="sec-title">✅ إشارات ({passed.length})</div>
               <div style={{ maxHeight:280, overflowY:"auto" }}>
                 {passed.map((r,i) => (
-                  <div key={i} className="rrow" style={{ background:"rgba(0,255,136,0.06)", border:"1px solid rgba(0,255,136,0.2)", cursor:"pointer" }} onClick={() => window.open(`https://www.tradingview.com/chart/?symbol=TADAWUL:${r.symbol}`, "_blank")}>
+                  <div key={i} className="rrow" style={{ background:"rgba(0,255,136,0.06)", border:"1px solid rgba(0,255,136,0.2)", cursor:"pointer" }}
+                    onClick={() => window.open(`https://www.tradingview.com/chart/?symbol=TADAWUL:${r.symbol}`, "_blank")}>
                     <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                       <div style={{ width:8, height:8, borderRadius:"50%", background:"#00ff88", animation:"pulse 2s infinite" }} />
                       <div>
@@ -315,13 +309,13 @@ export default function Scanner() {
             </div>
           )}
 
-          {/* النتائج — لم تجتز */}
           {failed.length > 0 && (
             <div className="card">
               <div className="sec-title" style={{ color:"#475569" }}>— لم تجتز ({failed.length})</div>
               <div style={{ maxHeight:200, overflowY:"auto" }}>
                 {failed.map((r,i) => (
-                  <div key={i} className="rrow" style={{ background:"transparent", border:"1px solid #1e3a5f", opacity:0.55, cursor:"pointer" }} onClick={() => window.open(`https://www.tradingview.com/chart/?symbol=TADAWUL:${r.symbol}`, "_blank")}>
+                  <div key={i} className="rrow" style={{ background:"transparent", border:"1px solid #1e3a5f", opacity:0.55, cursor:"pointer" }}
+                    onClick={() => window.open(`https://www.tradingview.com/chart/?symbol=TADAWUL:${r.symbol}`, "_blank")}>
                     <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                       <div style={{ width:6, height:6, borderRadius:"50%", background:"#334155" }} />
                       <span style={{ fontSize:12, color:"#64748b", fontFamily:"mono" }}>{r.symbol}</span>
@@ -348,7 +342,6 @@ export default function Scanner() {
             </div>
           )}
 
-          {/* السجل */}
           <div className="card">
             <div className="sec-title">📝 السجل</div>
             <div style={{ maxHeight:200, overflowY:"auto" }}>
@@ -376,16 +369,13 @@ const CSS = `
   :root{font-family:'IBM Plex Mono',monospace}
   ::-webkit-scrollbar{width:4px}
   ::-webkit-scrollbar-thumb{background:#1e3a5f;border-radius:2px}
-  input[type=text],input[type=number]{
-    background:#0a1628;border:1px solid #1e3a5f;color:#e2e8f0;
-    padding:8px 10px;border-radius:5px;font-size:11px;outline:none;width:100%;transition:border .2s}
+  input[type=text],input[type=number]{background:#0a1628;border:1px solid #1e3a5f;color:#e2e8f0;padding:8px 10px;border-radius:5px;font-size:11px;outline:none;width:100%;transition:border .2s}
   input:focus{border-color:#0ea5e9}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
   @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
   .card{background:#0d1526;border:1px solid #1e3a5f;border-radius:8px;padding:16px;margin-bottom:12px}
   .sec-title{font-size:9px;letter-spacing:3px;color:#0ea5e9;margin-bottom:14px}
   .sub{font-size:10px;letter-spacing:3px;color:#0ea5e9}
-  .label{font-size:9px;letter-spacing:1.5px;color:#64748b;margin-bottom:5px}
   .btn{border:none;padding:9px 18px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;letter-spacing:1px;transition:all .2s;font-family:'IBM Plex Mono',monospace}
   .btn:disabled{opacity:.4;cursor:not-allowed}
   .btn-primary{background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff}
