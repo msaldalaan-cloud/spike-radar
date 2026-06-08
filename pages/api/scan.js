@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "7.8", status: "ok" });
+    return res.status(200).json({ version: "7.6", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -100,19 +100,10 @@ export default async function handler(req, res) {
           };
         }
 
-        // مرحلة 2: الشهري — إذا فارغ أعد المحاولة مرة واحدة
-        if (cfg.stochMonthly && (!stochResults.monthly || stochResults.monthly.k == null)) {
-          const retryM = await fetchOHLC(sahmkKey, symbol, "1m");
-          if (retryM) stochResults.monthly = { ...calcStoch(retryM.closes, retryM.highs, retryM.lows, 5, 3, 3), isToday: retryM.isToday };
-        }
-        if (cfg.dmaMonthly && (!dmaResults.monthly || dmaResults.monthly.dif == null)) {
-          const retryM = ohlcCache["1m"] || await fetchOHLC(sahmkKey, symbol, "1m");
-          if (retryM) { const r = calcDMA(retryM.closes, 10, 50, 10); if (r) dmaResults.monthly = { ...r, isToday: retryM.isToday }; }
-        }
+        // مرحلة 2: الشهري
         const cfgFinal = { ...cfg };
-        // إذا لا تزال فارغة بعد إعادة المحاولة — يُفشل السهم
-        if (cfg.stochMonthly && (!stochResults.monthly || stochResults.monthly.k == null)) cfgFinal.stochMonthly = true;
-        if (cfg.dmaMonthly   && (!dmaResults.monthly   || dmaResults.monthly.dif == null)) cfgFinal.dmaMonthly   = true;
+        if (cfg.stochMonthly && !stochResults.monthly) cfgFinal.stochMonthly = false;
+        if (cfg.dmaMonthly   && !dmaResults.monthly)   cfgFinal.dmaMonthly   = false;
 
         const evaluation = evalSignal(stochResults, dmaResults, cfgFinal, dailyCloses);
 
@@ -381,7 +372,7 @@ function evalSignal(stochResults, dmaResults, cfg, closes) {
     { active:cfg.stochMonthly, mode:cfg.stochMonthlyMode, data:stochResults.monthly,
       osKey:cfg.stochMonthlyOS,osLvl:cfg.stochMonthlyOSLevel,sma50:cfg.stochMonthlySMA50},
   ].filter(t => t.active);
-  if (stochTFs.some(t => !t.data || t.data.k == null)) return { pass: false };
+  if (stochTFs.some(t => !t.data)) return { pass: false };
 
   const stochOk = stochTFs.length === 0 || stochTFs.every(t => {
     const { k, d, kPrev, dPrev } = t.data;
@@ -400,7 +391,7 @@ function evalSignal(stochResults, dmaResults, cfg, closes) {
     { active:cfg.dmaMonthly, mode:cfg.dmaMonthlyMode, data:dmaResults.monthly,
       zero:cfg.dmaMonthlyZero,sma50:cfg.dmaMonthlySMA50 },
   ].filter(t => t.active);
-  if (dmaTFs.some(t => !t.data || t.data.dif == null)) return { pass: false };
+  if (dmaTFs.some(t => !t.data)) return { pass: false };
 
   const dmaOk = dmaTFs.length === 0 || dmaTFs.every(t => {
     const { dif, difma, difPrev, difmaPrev } = t.data;
