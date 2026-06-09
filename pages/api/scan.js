@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "7.9", status: "ok" });
+    return res.status(200).json({ version: "8.0-debug", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -219,7 +219,10 @@ async function fetchOHLC(apiKey, symbol, interval) {
 
   const aggregated = aggregateCandles(sorted, interval);
   const minLen = interval === "1m" ? 5 : 10;
-  if (aggregated.length < minLen) return null;
+  if (aggregated.length < minLen) {
+    console.log(`${symbol} ${interval}: aggregated=${aggregated.length} < ${minLen}`);
+    return null;
+  }
 
   const lastAgg = aggregated[aggregated.length-1].date;
   const isToday = lastAgg >= lastTradingDay;
@@ -271,6 +274,7 @@ function calcStoch(closes, highs, lows, kPeriod, smooth, dPeriod) {
   const D = [];
   for (let i=dPeriod-1;i<K.length;i++){let s=0;for(let j=i-dPeriod+1;j<=i;j++)s+=K[j];D.push(s/dPeriod);}
   const m = D.length - 1;
+  if (m < 1 || m+(dPeriod-1) >= K.length) return { k:null, kPrev:null, d:null, dPrev:null, crossedLastBar:false, kAbovePrev:false };
   const k=K[m+(dPeriod-1)], kPrev=K[m+(dPeriod-1)-1], d=D[m], dPrev=D[m-1];
   return { k, kPrev, d, dPrev, crossedLastBar: kPrev<dPrev&&k>d, kAbovePrev: kPrev>dPrev };
 }
