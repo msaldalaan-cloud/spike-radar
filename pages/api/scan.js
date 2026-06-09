@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "8.0-debug", status: "ok" });
+    return res.status(200).json({ version: "8.2", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -155,7 +155,23 @@ async function fetchOHLC(apiKey, symbol, interval) {
   if (!r.ok) return null;
 
   const json  = await r.json();
-  const daily = json.data || [];
+  let daily = json.data || [];
+
+  // اذا البيانات قليله للشهري نجلب دفعه اضافيه
+  if (interval === "1m" && daily.length < 300) {
+    const from2 = new Date(Date.now() - 3650*24*60*60*1000).toISOString().split("T")[0];
+    const to2   = from;
+    try {
+      const r2 = await fetch(`${BASE}/historical/${symbol}/?interval=1d&from=${from2}&to=${to2}`, {
+        headers: { "X-API-Key": apiKey },
+      });
+      if (r2.ok) {
+        const json2 = await r2.json();
+        daily = [...(json2.data || []), ...daily];
+      }
+    } catch {}
+  }
+
   if (daily.length < 10) return null;
 
   const sorted = [...daily].sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -218,11 +234,8 @@ async function fetchOHLC(apiKey, symbol, interval) {
   }
 
   const aggregated = aggregateCandles(sorted, interval);
-  const minLen = interval === "1m" ? 5 : 10;
-  if (aggregated.length < minLen) {
-    console.log(`${symbol} ${interval}: aggregated=${aggregated.length} < ${minLen}`);
-    return null;
-  }
+  const minLen = 10;
+  if (aggregated.length < minLen) return null;
 
   const lastAgg = aggregated[aggregated.length-1].date;
   const isToday = lastAgg >= lastTradingDay;
