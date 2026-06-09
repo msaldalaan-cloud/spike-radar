@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "8.2", status: "ok" });
+    return res.status(200).json({ version: "8.3", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -146,7 +146,7 @@ export default async function handler(req, res) {
 // ── جلب OHLC ─────────────────────────────────────────────────────
 async function fetchOHLC(apiKey, symbol, interval) {
   const to   = new Date().toISOString().split("T")[0];
-  const days = interval === "1m" ? 1825 : 730;
+  const days = 730;
   const from = new Date(Date.now() - days*24*60*60*1000).toISOString().split("T")[0];
 
   const r = await fetch(`${BASE}/historical/${symbol}/?interval=1d&from=${from}&to=${to}`, {
@@ -157,20 +157,7 @@ async function fetchOHLC(apiKey, symbol, interval) {
   const json  = await r.json();
   let daily = json.data || [];
 
-  // اذا البيانات قليله للشهري نجلب دفعه اضافيه
-  if (interval === "1m" && daily.length < 300) {
-    const from2 = new Date(Date.now() - 3650*24*60*60*1000).toISOString().split("T")[0];
-    const to2   = from;
-    try {
-      const r2 = await fetch(`${BASE}/historical/${symbol}/?interval=1d&from=${from2}&to=${to2}`, {
-        headers: { "X-API-Key": apiKey },
-      });
-      if (r2.ok) {
-        const json2 = await r2.json();
-        daily = [...(json2.data || []), ...daily];
-      }
-    } catch {}
-  }
+
 
   if (daily.length < 10) return null;
 
