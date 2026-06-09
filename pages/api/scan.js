@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "7.8", status: "ok" });
+    return res.status(200).json({ version: "7.9", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -218,7 +218,8 @@ async function fetchOHLC(apiKey, symbol, interval) {
   }
 
   const aggregated = aggregateCandles(sorted, interval);
-  if (aggregated.length < 10) return null;
+  const minLen = interval === "1m" ? 5 : 10;
+  if (aggregated.length < minLen) return null;
 
   const lastAgg = aggregated[aggregated.length-1].date;
   const isToday = lastAgg >= lastTradingDay;
