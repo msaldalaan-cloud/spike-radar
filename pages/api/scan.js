@@ -6,7 +6,7 @@ const BASE = "https://app.sahmk.sa/api/v1";
 
 export default async function handler(req, res) {
   if (req.method === "GET")
-    return res.status(200).json({ version: "8.3", status: "ok" });
+    return res.status(200).json({ version: "8.4", status: "ok" });
   if (req.method !== "POST")
     return res.status(405).json({ error: "Method not allowed" });
 
@@ -97,6 +97,7 @@ export default async function handler(req, res) {
             d:    evalPhase1.d    != null ? +evalPhase1.d.toFixed(2)    : null,
             dif:  evalPhase1.dif  != null ? +evalPhase1.dif.toFixed(4)  : null,
             difma:evalPhase1.difma!= null ? +evalPhase1.difma.toFixed(4): null,
+            price: dailyCloses ? +dailyCloses[dailyCloses.length-1].toFixed(2) : null,
           };
         }
 
@@ -123,6 +124,7 @@ export default async function handler(req, res) {
           d:     evaluation.d    != null ? +evaluation.d.toFixed(2)    : null,
           dif:   evaluation.dif  != null ? +evaluation.dif.toFixed(4)  : null,
           difma: evaluation.difma!= null ? +evaluation.difma.toFixed(4): null,
+          price: dailyCloses ? +dailyCloses[dailyCloses.length-1].toFixed(2) : null,
         };
       } catch { return null; }
     };
