@@ -104,11 +104,15 @@ export default async function handler(req, res) {
     const allPassedFiltered = newPassed;
     const totalSignalsNew   = allPassedFiltered.reduce((a, b) => a + b.passed.length, 0);
 
+    // اسماء الاستراتيجيات للعنوان
+    const stratNames = [...new Set(allPassedFiltered.map(s => s.stratName))].join(", ");
+
     const rows = allPassedFiltered.flatMap(({ stratName, passed }) =>
       passed.map(p => `
         <tr>
           <td style="padding:10px;border-bottom:1px solid #1e3a5f;font-weight:700;color:#00ff88;font-family:monospace">${p.symbol}</td>
           <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:#94a3b8">${p.name || ""}</td>
+          <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:#f59e0b;font-family:monospace;font-weight:700">${p.price != null ? p.price.toFixed(2) : "-"}</td>
           <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:#e2e8f0;font-family:monospace">${p.k?.toFixed(1) ?? "-"} / ${p.d?.toFixed(1) ?? "-"}</td>
           <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:${(p.dif??0)>0?"#00ff88":"#ff4444"};font-family:monospace">${p.dif?.toFixed(3) ?? "-"}</td>
           <td style="padding:10px;border-bottom:1px solid #1e3a5f;color:#64748b;font-size:11px">${stratName}</td>
@@ -123,6 +127,7 @@ export default async function handler(req, res) {
     <div style="font-size:11px;letter-spacing:3px;color:#0ea5e9;margin-bottom:6px">STOCH 5,3,3 · DMA 10,50,10 · SAHMK API</div>
     <h1 style="font-size:26px;font-weight:700;color:#fff;letter-spacing:4px;margin:0">⚡ SPIKE RADAR</h1>
     <div style="margin-top:8px;font-size:12px;color:#64748b">${timeStr}</div>
+    <div style="margin-top:6px;font-size:11px;color:#0ea5e9">${stratNames}</div>
   </div>
   <div style="display:flex;gap:12px;margin-bottom:20px;justify-content:center">
     <div style="background:#0d1526;border:1px solid #00ff88;border-radius:8px;padding:14px 24px;text-align:center">
@@ -142,6 +147,7 @@ export default async function handler(req, res) {
       <thead><tr style="background:#080c14">
         <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">الرمز</th>
         <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">الاسم</th>
+        <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">السعر</th>
         <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">K / D</th>
         <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">DIF</th>
         <th style="padding:8px 10px;text-align:right;font-size:9px;color:#334155">الاستراتيجية</th>
@@ -160,7 +166,7 @@ export default async function handler(req, res) {
       await transporter.sendMail({
         from:    `"SPIKE RADAR" <${emailUser}>`,
         to:      emailUser,
-        subject: `SPIKE RADAR -- ${totalSignalsNew} اشاره | ${timeStr}`,
+        subject: `SPIKE RADAR -- ${stratNames} -- ${totalSignalsNew} اشاره | ${timeStr}`,
         html,
       });
     } catch (e) {
